@@ -212,6 +212,9 @@ final class AppModel {
             self?.recordProgress(item: item, position: position, duration: duration)
         }
         session.epgProvider = { [weak self] item in await self?.epg(for: item) ?? [] }
+        session.resumePosition = { [weak self] item in
+            item.isLive ? nil : self?.progress(item.kind, item.id)?.resumePosition
+        }
 
         let stored = UserDefaults.standard.string(forKey: "activePlaylist").flatMap(UUID.init(uuidString:))
         activePlaylistID = playlists.first { $0.id == stored }?.id ?? playlists.first?.id
@@ -483,8 +486,7 @@ final class AppModel {
 
     func setWatched(movie: Movie, _ watched: Bool) {
         if watched {
-            guard let url = loaded?.client?.movieURL(movie) ?? movie.directURL else { return }
-            let item = PlaybackItem(id: movie.id, kind: .movie, title: movie.name, url: url, artwork: movie.poster)
+            guard let item = movieItem(movie) else { return }
             library.markWatched(key: key(.movie, movie.id), item: item, duration: progress(.movie, movie.id)?.duration)
         } else {
             library.markUnwatched(key: key(.movie, movie.id))
@@ -629,17 +631,18 @@ final class AppModel {
 
     func play(channel: Channel, in list: [Channel]) {
         guard let loaded else { return }
-        let items = list.compactMap { liveItem($0, loaded: loaded) }
-        let index = list.firstIndex(of: channel) ?? 0
-        session.play(items, at: index)
-        isPlayerPresented = true
+        let (window, index) = queueWindow(list, around: channel)
+        startQueue(window.compactMap { liveItem($0, loaded: loaded) }, at: index, title: channel.categoryID.flatMap(categoryName))
     }
 
-    func play(movie: Movie, resume: Bool = true) {
-        guard let loaded, let url = loaded.client?.movieURL(movie) ?? movie.directURL else { return }
-        let item = PlaybackItem(id: movie.id, kind: .movie, title: movie.name, url: url, artwork: movie.poster)
-        session.play([item], at: 0, startAt: resume ? progress(.movie, movie.id)?.resumePosition : nil)
-        isPlayerPresented = true
+    /// Queues the list the movie was picked from (defaults to what's on screen) so N / the list panel can switch titles.
+    func play(movie: Movie, in list: [Movie]? = nil, resume: Bool = true) {
+        let source = list ?? visibleMovies
+        let (window, index) = source.contains(movie) ? queueWindow(source, around: movie) : ([movie], 0)
+        let items = window.compactMap(movieItem)
+        guard items.indices.contains(index) else { return }
+        startQueue(items, at: index, title: list == nil ? filterTitle : nil,
+                   startAt: resume ? progress(.movie, movie.id)?.resumePosition : nil)
     }
 
     /// Plays an episode with the rest of the series queued for autoplay.
@@ -647,14 +650,36 @@ final class AppModel {
         guard let client = loaded?.client else { return }
         let all = seasons.flatMap(\.episodes)
         let items = all.map { episodeItem($0, of: series, client: client) }
-        let index = all.firstIndex(of: episode) ?? 0
-        session.play(items, at: index, startAt: resume ? progress(.episode, episode.id)?.resumePosition : nil)
+        startQueue(items, at: all.firstIndex(of: episode) ?? 0, title: series.name,
+                   startAt: resume ? progress(.episode, episode.id)?.resumePosition : nil)
+    }
+
+    /// Resumes one entry with the rest of Continue Watching queued alongside it.
+    func resume(_ entry: WatchProgress) {
+        let entries = continueWatching
+        let items = entries.contains(entry) ? entries.map(\.item) : [entry.item]
+        startQueue(items, at: items.firstIndex(of: entry.item) ?? 0, title: "Continue Watching", startAt: entry.resumePosition)
+    }
+
+    private func startQueue(_ items: [PlaybackItem], at index: Int, title: String?, startAt: Double? = nil) {
+        session.queueTitle = title
+        session.play(items, at: index, startAt: startAt)
         isPlayerPresented = true
     }
 
-    func resume(_ entry: WatchProgress) {
-        session.play([entry.item], at: 0, startAt: entry.resumePosition)
-        isPlayerPresented = true
+    private func queueWindow<Item: Equatable>(_ list: [Item], around item: Item) -> ([Item], Int) {
+        let position = list.firstIndex(of: item) ?? 0
+        let range = QueueWindow.range(count: list.count, around: position)
+        return (Array(list[range]), position - range.lowerBound)
+    }
+
+    private func categoryName(_ id: String) -> String? {
+        loaded?.categories(for: section).first { $0.id == id }?.name.trimmingCharacters(in: .whitespaces)
+    }
+
+    private func movieItem(_ movie: Movie) -> PlaybackItem? {
+        guard let url = loaded?.client?.movieURL(movie) ?? movie.directURL else { return nil }
+        return PlaybackItem(id: movie.id, kind: .movie, title: movie.name, url: url, artwork: movie.poster)
     }
 
     private func episodeItem(_ episode: Episode, of series: Series, client: XtreamClient) -> PlaybackItem {

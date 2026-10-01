@@ -107,3 +107,16 @@ public struct BrowseIndex<Item: Browsable>: Sendable where Item: Sendable {
         }
     }
 }
+
+/// Limits a play queue to a window around the chosen item, so starting playback from a
+/// 65k-title "All" view doesn't build tens of thousands of stream URLs.
+public enum QueueWindow {
+    public static let defaultSize = 500
+
+    /// The range of `count` items to queue, centred on `index` and shifted to stay in bounds.
+    public static func range(count: Int, around index: Int, size: Int = defaultSize) -> Range<Int> {
+        guard count > size else { return 0..<count }
+        let start = min(max(index - size / 2, 0), count - size)
+        return start..<(start + size)
+    }
+}

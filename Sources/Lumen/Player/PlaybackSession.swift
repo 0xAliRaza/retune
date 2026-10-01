@@ -15,7 +15,12 @@ final class PlaybackSession {
     /// Seconds left before the next episode starts automatically; nil when no countdown is running.
     private(set) var autoplayCountdown: Int?
 
+    /// Heading for the list panel, e.g. the category or series the queue came from.
+    var queueTitle: String?
+
     @ObservationIgnored var onProgress: ((PlaybackItem, Double, Double) -> Void)?
+    /// Saved resume point for an item, used when switching within the queue.
+    @ObservationIgnored var resumePosition: ((PlaybackItem) -> Double?)?
     @ObservationIgnored var epgProvider: ((PlaybackItem) async -> [EPGEntry])?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
     @ObservationIgnored private var epgTask: Task<Void, Never>?
@@ -64,7 +69,7 @@ final class PlaybackSession {
     func jump(to item: PlaybackItem) {
         guard let target = queue.firstIndex(of: item), target != index else { return }
         saveProgress()
-        start(at: target, startAt: nil)
+        start(at: target, startAt: resumePosition?(item))
     }
 
     func retry() {
@@ -80,6 +85,7 @@ final class PlaybackSession {
         tuneTask?.cancel()
         engine.stop()
         queue = []
+        queueTitle = nil
         epg = []
         index = 0
     }
@@ -99,7 +105,7 @@ final class PlaybackSession {
             return
         }
         saveProgress()
-        start(at: target, startAt: nil, debounce: current.isLive)
+        start(at: target, startAt: resumePosition?(queue[target]), debounce: true)
     }
 
     private func start(at position: Int, startAt: Double?, debounce: Bool = false) {
@@ -131,7 +137,8 @@ final class PlaybackSession {
     private func handleEndOfFile() {
         guard let current, !current.isLive else { return }
         saveProgress()
-        guard hasNext, PlayerPreferences.autoplayNextEpisode else { return }
+        // Only a series flows on by itself; a movie ending shouldn't roll into the next title in its category.
+        guard current.kind == .episode, nextItem?.kind == .episode, hasNext, PlayerPreferences.autoplayNextEpisode else { return }
         autoplayCountdown = 8
         countdownTask = Task { [weak self] in
             while let self, let remaining = self.autoplayCountdown, remaining > 0 {

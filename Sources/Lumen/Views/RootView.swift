@@ -1,8 +1,11 @@
+import AppKit
 import LumenCore
 import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var window: NSWindow?
+    @State private var swipeMonitor: SwipeBackMonitor?
 
     var body: some View {
         @Bindable var model = model
@@ -22,6 +25,14 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.28), value: model.isPlayerPresented)
         // Stays hidden until playback has fully stopped, so it never pops in over the fading player.
         .toolbar(model.isPlayerPresented || model.session.isActive ? .hidden : .visible, for: .windowToolbar)
+        .background(WindowAccessor(window: $window))
+        .onAppear {
+            // Back-swipe pops movie/series pages; the player installs its own while it's open.
+            let monitor = SwipeBackMonitor(canGoBack: { !model.isPlayerPresented && !model.detailPath.isEmpty },
+                                           onBack: { model.detailPath.removeLast() })
+            monitor.start(window: { window })
+            swipeMonitor = monitor
+        }
         .sheet(isPresented: $model.isAddingPlaylist) { PlaylistEditor(existing: nil) }
         .sheet(isPresented: $model.isShowingShortcuts) { ShortcutsView() }
         .sheet(item: $model.editingPlaylist) { PlaylistEditor(existing: $0) }

@@ -317,3 +317,15 @@ struct CategoryAndHistoryTests {
         #expect(index.select(category: nil, query: "b", excludedCategories: ["adult"]).isEmpty)
     }
 }
+
+struct QueueWindowTests {
+    @Test func smallListsAreQueuedWhole() {
+        #expect(QueueWindow.range(count: 10, around: 3, size: 500) == 0..<10)
+    }
+
+    @Test func largeListsAreWindowedAroundTheSelection() {
+        #expect(QueueWindow.range(count: 1000, around: 500, size: 100) == 450..<550)
+        #expect(QueueWindow.range(count: 1000, around: 5, size: 100) == 0..<100)
+        #expect(QueueWindow.range(count: 1000, around: 990, size: 100) == 900..<1000)
+    }
+}

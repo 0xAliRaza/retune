@@ -6,9 +6,10 @@ struct PlayerScreen: View {
     @Environment(AppModel.self) private var model
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
-    @State private var showChannels = false
+    @State private var showQueue = false
     @State private var window: NSWindow?
     @State private var keyMonitor: Any?
+    @State private var swipeMonitor: SwipeBackMonitor?
     @State private var flash: String?
     @State private var showStats = false
     @State private var stats = PlaybackStats()
@@ -31,15 +32,15 @@ struct PlayerScreen: View {
 
             if controlsVisible || engine.isPaused {
                 VStack(spacing: 0) {
-                    PlayerTopBar(onClose: close, showChannels: $showChannels)
+                    PlayerTopBar(onClose: close, showQueue: $showQueue)
                     Spacer()
                     PlayerBottomBar(onFullScreen: toggleFullScreen, showStats: $showStats, stats: stats)
                 }
                 .transition(.opacity)
             }
 
-            if showChannels, session.current?.isLive == true {
-                HStack { Spacer(); ChannelDrawer(onPick: { showChannels = false }) }
+            if showQueue, session.queue.count > 1 {
+                HStack { Spacer(); QueueDrawer(onPick: { showQueue = false }) }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
@@ -70,7 +71,7 @@ struct PlayerScreen: View {
             if case .active = phase { pokeControls() }
         }
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
-        .animation(.easeInOut(duration: 0.25), value: showChannels)
+        .animation(.easeInOut(duration: 0.25), value: showQueue)
         .animation(.easeInOut(duration: 0.2), value: flash)
         .animation(.easeInOut(duration: 0.2), value: showStats)
         .animation(.easeInOut(duration: 0.3), value: engine.hasVideoFrame)
@@ -80,7 +81,13 @@ struct PlayerScreen: View {
             try? await Task.sleep(for: .milliseconds(250))
             if !Task.isCancelled { showBufferingSpinner = true }
         }
-        .onAppear { installKeyMonitor(); pokeControls() }
+        .onAppear {
+            installKeyMonitor()
+            pokeControls()
+            let monitor = SwipeBackMonitor(canGoBack: { true }, onBack: { close() })
+            monitor.start(window: { window })
+            swipeMonitor = monitor
+        }
         .task {
             // One poll feeds both the control-bar readout and the detailed panel.
             while !Task.isCancelled {
@@ -90,6 +97,7 @@ struct PlayerScreen: View {
         }
         .onDisappear {
             removeKeyMonitor()
+            swipeMonitor?.stop()
             NSCursor.unhide()
         }
     }
@@ -130,7 +138,7 @@ struct PlayerScreen: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled, !engine.isPaused, !showChannels else { return }
+            guard !Task.isCancelled, !engine.isPaused, !showQueue else { return }
             controlsVisible = false
             NSCursor.setHiddenUntilMouseMoves(true)
         }
@@ -168,6 +176,8 @@ struct PlayerScreen: View {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.window === window, !event.modifierFlags.contains(.command) else { return event }
+            // Typing into a field (e.g. the list panel's search) must not trigger player shortcuts.
+            if event.window?.firstResponder is NSTextView, event.keyCode != 53 { return event }
             return handleKey(event) ? nil : event
         }
     }
@@ -177,7 +187,7 @@ struct PlayerScreen: View {
         keyMonitor = nil
     }
 
-    /// Space play/pause · ←/→ seek · ↑/↓ volume (live: channel) · F fullscreen · M mute · L channels · ⌫ last channel · [ ] \\ speed · I stats · ? shortcuts · Esc back.
+    /// Space play/pause · ←/→ seek · ↑/↓ previous/next item · F fullscreen · M mute · L channels · ⌫ last channel · [ ] \\ speed · I stats · ? shortcuts · Esc back.
     private func handleKey(_ event: NSEvent) -> Bool {
         let isLive = session.current?.isLive == true
         pokeControls()
@@ -186,21 +196,21 @@ struct PlayerScreen: View {
         case 49: engine.togglePause(); return true
         case 123: if !isLive { engine.seek(by: event.modifierFlags.contains(.shift) ? -60 : -10); showFlash("−\(event.modifierFlags.contains(.shift) ? 60 : 10)s") }; return true
         case 124: if !isLive { engine.seek(by: event.modifierFlags.contains(.shift) ? 60 : 10); showFlash("+\(event.modifierFlags.contains(.shift) ? 60 : 10)s") }; return true
-        case 126: if isLive { session.playPrevious() } else { changeVolume(5) }; return true
-        case 125: if isLive { session.playNext() } else { changeVolume(-5) }; return true
+        case 126: session.playPrevious(); return true
+        case 125: session.playNext(); return true
         case 51: if isLive { session.playLastChannel() }; return true
         case 116: session.playPrevious(); return true
         case 121: session.playNext(); return true
         case 53:
-            if showChannels { showChannels = false } else if showStats { showStats = false } else { close() }
+            if showQueue { showQueue = false } else if showStats { showStats = false } else { close() }
             return true
         default: break
         }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f": toggleFullScreen(); return true
         case "m": engine.setMuted(!engine.isMuted); showFlash(engine.isMuted ? "Sound On" : "Muted"); return true
-        case "l": if isLive { showChannels.toggle() }; return true
-        case "n": if session.hasNext { session.playNext() }; return true
+        case "l": if session.queue.count > 1 { showQueue.toggle() }; return true
+        case "n": if event.modifierFlags.contains(.shift) { session.playPrevious() } else { session.playNext() }; return true
         case "s": engine.screenshot(); showFlash("Screenshot saved to Desktop"); return true
         case "i": showStats.toggle(); return true
         case "[": if !isLive { changeSpeed(by: -1) }; return true
@@ -232,7 +242,7 @@ struct PlayerScreen: View {
 private struct PlayerTopBar: View {
     @Environment(AppModel.self) private var model
     let onClose: () -> Void
-    @Binding var showChannels: Bool
+    @Binding var showQueue: Bool
 
     var body: some View {
         let session = model.session
@@ -272,9 +282,9 @@ private struct PlayerTopBar: View {
                 }
             }
             Spacer()
-            if session.current?.isLive == true {
-                Button { showChannels.toggle() } label: { Image(systemName: "list.bullet") }
-                    .help("Channel list (L)")
+            if session.queue.count > 1 {
+                Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
+                    .help(session.current?.isLive == true ? "Channel list (L)" : "Up next (L)")
             }
             Button(action: onClose) { Image(systemName: "chevron.down") }
                 .help("Back to browsing (Esc)")
@@ -300,23 +310,21 @@ private struct PlayerBottomBar: View {
         VStack(spacing: 10) {
             if !isLive, engine.isSeekable { Scrubber() }
             HStack(spacing: 6) {
-                if isLive {
-                    Button { session.playPrevious() } label: { Image(systemName: "chevron.up") }.help("Previous channel (↑)")
-                } else {
+                // Same layout for live and on-demand: previous · (−10s) · play · (+10s) · next.
+                Button { session.playPrevious() } label: { Image(systemName: "backward.end.fill") }
+                    .help("Previous (↑)").disabled(!session.hasPrevious && !isLive)
+                if engine.isSeekable {
                     Button { engine.seek(by: -10) } label: { Image(systemName: "gobackward.10") }.help("Back 10 seconds (←)")
                 }
                 Button { engine.togglePause() } label: {
                     Image(systemName: engine.isPaused ? "play.fill" : "pause.fill").font(.title2).frame(width: 30)
                 }
                 .help(engine.isPaused ? "Play (Space)" : "Pause (Space)")
-                if isLive {
-                    Button { session.playNext() } label: { Image(systemName: "chevron.down") }.help("Next channel (↓)")
-                } else {
+                if engine.isSeekable {
                     Button { engine.seek(by: 10) } label: { Image(systemName: "goforward.10") }.help("Forward 10 seconds (→)")
-                    if session.hasNext {
-                        Button { session.playNext() } label: { Image(systemName: "forward.end.fill") }.help("Next episode (N)")
-                    }
                 }
+                Button { session.playNext() } label: { Image(systemName: "forward.end.fill") }
+                    .help("Next (↓)").disabled(!session.hasNext && !isLive)
                 VolumeControl().padding(.leading, 8)
                 Spacer()
                 if let readout = readout {
@@ -455,9 +463,10 @@ private struct TrackMenus: View {
     }
 }
 
-// MARK: - Live channel drawer
+// MARK: - Queue drawer
 
-private struct ChannelDrawer: View {
+/// Side panel listing the play queue: channels, a category's movies, or a series' episodes.
+private struct QueueDrawer: View {
     @Environment(AppModel.self) private var model
     let onPick: () -> Void
     @State private var query = ""
@@ -465,29 +474,19 @@ private struct ChannelDrawer: View {
     var body: some View {
         let session = model.session
         let terms = SearchText.terms(query)
-        let items = session.queue.filter { terms.isEmpty || SearchText.matches(normalizedName: SearchText.normalize($0.title), terms: terms) }
+        let items = session.queue.filter { item in
+            terms.isEmpty || SearchText.matches(normalizedName: SearchText.normalize(label(item) + " " + item.title), terms: terms)
+        }
         VStack(alignment: .leading, spacing: 10) {
-            Text(session.current?.subtitle ?? "Channels").font(.headline).foregroundStyle(.white)
-            TextField("Find channel", text: $query).textFieldStyle(.roundedBorder)
+            Text(session.queueTitle ?? session.current?.subtitle ?? "Up Next").font(.headline).foregroundStyle(.white).lineLimit(1)
+            TextField(session.current?.isLive == true ? "Find channel" : "Find", text: $query).textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(items) { item in
-                            Button { session.jump(to: item); onPick() } label: {
-                                HStack(spacing: 10) {
-                                    RemoteImage(url: item.artwork, maxPixelSize: 100, contentMode: .fit) {
-                                        Image(systemName: "tv").foregroundStyle(.white.opacity(0.4))
-                                    }
-                                    .frame(width: 44, height: 28)
-                                    Text(item.title).lineLimit(1).foregroundStyle(.white)
-                                    Spacer()
-                                }
-                                .padding(8)
-                                .background(item == session.current ? Color.accentColor.opacity(0.45) : .clear, in: .rect(cornerRadius: 8))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .id(item.id)
+                            Button { session.jump(to: item); onPick() } label: { row(item, isCurrent: item == session.current) }
+                                .buttonStyle(.plain)
+                                .id(item.id)
                         }
                     }
                 }
@@ -495,11 +494,49 @@ private struct ChannelDrawer: View {
             }
         }
         .padding(16)
-        .frame(width: 320)
+        .frame(width: 340)
         .frame(maxHeight: .infinity)
         .glassPanel(cornerRadius: 18)
         .environment(\.colorScheme, .dark)
         .padding(.vertical, 90).padding(.trailing, 24)
+    }
+
+    /// Episodes are identified by "S1 E2 · Title"; everything else by its own title.
+    private func label(_ item: PlaybackItem) -> String {
+        item.kind == .episode ? (item.subtitle ?? item.title) : item.title
+    }
+
+    private func row(_ item: PlaybackItem, isCurrent: Bool) -> some View {
+        HStack(spacing: 10) {
+            thumbnail(item)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label(item)).lineLimit(2).foregroundStyle(.white)
+                if let progress = model.progress(item.kind, item.id), progress.fraction > 0.01, !item.isLive {
+                    ProgressView(value: progress.fraction).tint(.accentColor).frame(maxWidth: 120)
+                }
+            }
+            Spacer(minLength: 0)
+            if isCurrent { Image(systemName: "speaker.wave.2.fill").font(.caption).foregroundStyle(.white) }
+        }
+        .padding(8)
+        .background(isCurrent ? Color.accentColor.opacity(0.45) : .clear, in: .rect(cornerRadius: 8))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder private func thumbnail(_ item: PlaybackItem) -> some View {
+        switch item.kind {
+        case .live:
+            RemoteImage(url: item.artwork, maxPixelSize: 100, contentMode: .fit) {
+                Image(systemName: "tv").foregroundStyle(.white.opacity(0.4))
+            }
+            .frame(width: 44, height: 28)
+        case .episode:
+            RemoteImage(url: item.artwork, maxPixelSize: 180) { ArtworkPlaceholder(title: item.title, symbol: "play.rectangle") }
+                .frame(width: 72, height: 40).clipShape(.rect(cornerRadius: 5))
+        case .movie, .series:
+            RemoteImage(url: item.artwork, maxPixelSize: 120) { ArtworkPlaceholder(title: item.title) }
+                .frame(width: 32, height: 48).clipShape(.rect(cornerRadius: 4))
+        }
     }
 }
 
