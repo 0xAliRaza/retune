@@ -108,13 +108,23 @@ struct LoadedCatalog {
     let movies: BrowseIndex<Movie>
     let series: BrowseIndex<Series>
 
-    init(playlist: Playlist, catalog: Catalog, client: XtreamClient?) {
+    private init(playlist: Playlist, catalog: Catalog, client: XtreamClient?,
+                 channels: BrowseIndex<Channel>, movies: BrowseIndex<Movie>, series: BrowseIndex<Series>) {
         self.playlist = playlist
         self.catalog = catalog
         self.client = client
-        channels = BrowseIndex(catalog.channels)
-        movies = BrowseIndex(catalog.movies)
-        series = BrowseIndex(catalog.series)
+        self.channels = channels
+        self.movies = movies
+        self.series = series
+    }
+
+    /// Builds the three search indexes in parallel (normalising ~88k titles).
+    static func build(playlist: Playlist, catalog: Catalog, client: XtreamClient?) async -> LoadedCatalog {
+        async let channels = Task.detached(priority: .userInitiated) { BrowseIndex(catalog.channels) }.value
+        async let movies = Task.detached(priority: .userInitiated) { BrowseIndex(catalog.movies) }.value
+        async let series = Task.detached(priority: .userInitiated) { BrowseIndex(catalog.series) }.value
+        return await LoadedCatalog(playlist: playlist, catalog: catalog, client: client,
+                                   channels: channels, movies: movies, series: series)
     }
 
     func categories(for section: LibrarySection) -> [MediaCategory] {
@@ -313,9 +323,14 @@ final class AppModel {
         let client = credentials(for: playlist).map { XtreamClient(credentials: $0) }
         let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
         status = .loading("Opening \(playlist.name)…")
-        let cached = await Task.detached(priority: .userInitiated) {
-            cacheStore.load().map { LoadedCatalog(playlist: playlist, catalog: $0, client: client) }
-        }.value
+        // Fast parallel decode; the plain store load handles (and backs up) a corrupt file.
+        let catalog: Catalog?
+        if let fast = await Catalog.loadConcurrently(from: cacheStore.url) {
+            catalog = fast
+        } else {
+            catalog = await Task.detached(priority: .userInitiated) { cacheStore.load() }.value
+        }
+        let cached: LoadedCatalog? = if let catalog { await LoadedCatalog.build(playlist: playlist, catalog: catalog, client: client) } else { nil }
         guard generation == loadGeneration else { return }
 
         if let cached {
@@ -366,10 +381,8 @@ final class AppModel {
                 catalog = try await CatalogLoader.fetchM3U(url)
             }
             let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
-            let built = await Task.detached(priority: .userInitiated) {
-                try? cacheStore.save(catalog)
-                return LoadedCatalog(playlist: playlist, catalog: catalog, client: client)
-            }.value
+            Task.detached(priority: .utility) { try? cacheStore.save(catalog) }
+            let built = await LoadedCatalog.build(playlist: playlist, catalog: catalog, client: client)
             guard generation == loadGeneration else { return }
             loaded = built
             status = .ready
@@ -734,6 +747,13 @@ final class AppModel {
         let entries = continueWatching
         startQueue(from: entries.contains(entry) ? entries : [entry], selected: entry, title: "Continue Watching",
                    startAt: entry.resumePosition) { self.playable($0.item) }
+    }
+
+    /// Plays one standalone item (used by the `--play` developer hook).
+    func playDirect(_ item: PlaybackItem) {
+        session.queueTitle = nil
+        session.play([item], at: 0)
+        isPlayerPresented = true
     }
 
     /// Windows `list` around `selected`, builds playable items (skipping unplayable ones without

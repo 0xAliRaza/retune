@@ -50,7 +50,7 @@ final class PaneKeyRouter {
         }
 
         let action = PaneNavigation.action(for: key, in: pane,
-                                           contentHandlesHorizontal: model.layoutMode == .grid,
+                                           contentHandlesHorizontal: true,
                                            showingDetail: !model.detailPath.isEmpty)
         switch action {
         case .focus(let target):
@@ -106,14 +106,19 @@ final class PaneKeyRouter {
         [.sidebar, .categories, .content][min(index, 2)]
     }
 
-    /// NavigationSplitView's three columns are the arranged subviews of an NSSplitView.
+    private static weak var cachedSplitView: NSSplitView?
+
+    /// NavigationSplitView's three columns are the arranged subviews of an NSSplitView. Found once and
+    /// cached, since this runs on every navigation key press.
     private static func columns(in window: NSWindow) -> [NSView]? {
+        if let split = cachedSplitView, split.window === window { return split.arrangedSubviews }
         func search(_ view: NSView) -> NSSplitView? {
             if let split = view as? NSSplitView, split.arrangedSubviews.count == 3 { return split }
             for child in view.subviews { if let found = search(child) { return found } }
             return nil
         }
-        return window.contentView.flatMap(search)?.arrangedSubviews
+        cachedSplitView = window.contentView.flatMap(search)
+        return cachedSplitView?.arrangedSubviews
     }
 
     private static func firstTable(in view: NSView) -> NSTableView? {

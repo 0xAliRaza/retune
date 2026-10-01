@@ -187,7 +187,7 @@ extension URLSession {
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 600
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpMaximumConnectionsPerHost = 4
         return URLSession(configuration: configuration)
     }()
 }

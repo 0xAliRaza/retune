@@ -116,11 +116,15 @@ final class MPVPlayer {
             ("volume", String(storedVolume)),
             ("volume-max", "150"),
             // Network resilience for IPTV: generous cache and transparent reconnects.
+            // Read ahead aggressively so fast connections fill the buffer and slow patches don't stall.
             ("cache", "yes"),
-            ("demuxer-max-bytes", "300MiB"),
-            ("demuxer-max-back-bytes", "100MiB"),
-            ("demuxer-readahead-secs", "30"),
+            ("demuxer-max-bytes", "512MiB"),
+            ("demuxer-max-back-bytes", "128MiB"),
+            ("demuxer-readahead-secs", "120"),
             ("network-timeout", "20"),
+            // Start streams sooner: FFmpeg otherwise inspects up to ~5 s of a live stream before playing.
+            // 2 s found the audio (AAC and E-AC-3) on every provider TS channel probed; 3 s leaves margin.
+            ("demuxer-lavf-analyzeduration", "3"),
             ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"),
             ("user-agent", "Lumen/1.0 (Macintosh; libmpv)"),
             // Subtitles and languages: follow the system language first.

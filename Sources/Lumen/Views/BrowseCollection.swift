@@ -18,7 +18,8 @@ struct BrowseEntry {
     var id: String
 }
 
-/// Renders any content list as a grid, a thumbnail list, or a compact list.
+/// Renders any content list as a grid, a thumbnail list, or a compact list. All three are lazy and share
+/// one keyboard model (arrow keys move a focus highlight, Return opens).
 struct BrowseCollection<Item: Identifiable, Menu: View>: View where Item.ID == String {
     @Environment(AppModel.self) private var model
     let items: [Item]
@@ -29,8 +30,6 @@ struct BrowseCollection<Item: Identifiable, Menu: View>: View where Item.ID == S
     var onPlay: ((Item) -> Void)?
     @ViewBuilder let menu: (Item) -> Menu
     @FocusState private var focusedID: String?
-    @FocusState private var listFocused: Bool
-    @State private var selectedID: String?
     /// Tile to return to when focus comes back into the content column.
     @State private var lastFocusedID: String?
     @State private var gridWidth: CGFloat = 0
@@ -54,14 +53,8 @@ struct BrowseCollection<Item: Identifiable, Menu: View>: View where Item.ID == S
     /// Focus the remembered (else first) item in whichever layout is showing.
     private func takeFocus() {
         guard !items.isEmpty else { return }
-        let remembered = [lastFocusedID, selectedID].compactMap { $0 }.first { id in items.contains { $0.id == id } }
-        let target = remembered ?? items[0].id
-        if model.layoutMode == .grid {
-            focusedID = target
-        } else {
-            selectedID = target
-            listFocused = true
-        }
+        let remembered = lastFocusedID.flatMap { id in items.contains { $0.id == id } ? id : nil }
+        focusedID = remembered ?? items[0].id
     }
 
     private var tileMinimum: CGFloat {
@@ -125,8 +118,11 @@ struct BrowseCollection<Item: Identifiable, Menu: View>: View where Item.ID == S
         case .leftArrow: .left
         default: .right
         }
-        let columnCount = GridNavigation.columns(width: gridWidth - Self.gridPadding * 2, minimum: tileMinimum,
-                                                 spacing: Self.gridSpacing)
+        let isGrid = model.layoutMode == .grid
+        let columnCount = isGrid ? GridNavigation.columns(width: gridWidth - Self.gridPadding * 2, minimum: tileMinimum,
+                                                          spacing: Self.gridSpacing) : 1
+        // Lists only move vertically; → means nothing there and ← always leaves to the categories.
+        if !isGrid, direction == .right { return .ignored }
         // Leaving the grid: ← from the first column goes to the categories, ↑ from the top row to search.
         if let index, GridNavigation.isAtEdge(index, direction, columns: columnCount) {
             if direction == .left { model.focus(.categories); return .handled }
@@ -151,29 +147,49 @@ struct BrowseCollection<Item: Identifiable, Menu: View>: View where Item.ID == S
         }
     }
 
+    /// Rows render lazily like the grid: SwiftUI's `List` walks every row identity up front, which froze
+    /// the UI for ~1 s when opening Live TV "All" (16k channels). Keyboard focus reuses the grid's logic
+    /// with a single column.
     private func list(compact: Bool) -> some View {
-        List(items, selection: $selectedID) { item in
-            let entry = describe(item)
-            Group {
-                if compact { CompactRow(entry: entry) } else { ThumbnailRow(entry: entry) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { offset, item in
+                        let entry = describe(item)
+                        Group {
+                            if compact { CompactRow(entry: entry) } else { ThumbnailRow(entry: entry) }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, compact ? 3 : 2)
+                        .frame(maxWidth: .infinity, minHeight: compact ? 26 : 46, alignment: .leading)
+                        .background(rowBackground(offset: offset, isFocused: focusedID == item.id))
+                        .contentShape(Rectangle())
+                        .focusable()
+                        .focusEffectDisabled()
+                        .focused($focusedID, equals: item.id)
+                        .onTapGesture { onOpen(item) }
+                        .contextMenu { menu(item) }
+                    }
+                }
+                .padding(.vertical, 6)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { onOpen(item) }
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .return]) { press in
+                handleGridKey(press.key)
+            }
+            .onChange(of: focusedID) {
+                guard let focusedID else { return }
+                lastFocusedID = focusedID
+                model.focusedPane = .content
+                proxy.scrollTo(focusedID)
+            }
         }
-        // Arrow keys move the selection; Return or double-click opens it.
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let item = item(ids.first) { menu(item) }
-        } primaryAction: { ids in
-            if let item = item(ids.first) { onOpen(item) }
-        }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
-        .environment(\.defaultMinListRowHeight, compact ? 24 : 44)
-        .focused($listFocused)
-        .onChange(of: listFocused) { if listFocused { model.focusedPane = .content } }
     }
 
-    private func item(_ id: String?) -> Item? {
-        id.flatMap { id in items.first { $0.id == id } }
+    private func rowBackground(offset: Int, isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(isFocused ? AnyShapeStyle(Color.accentColor.opacity(0.28))
+                            : offset.isMultiple(of: 2) ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary.opacity(0.35)))
+            .padding(.horizontal, 6)
     }
 }
 

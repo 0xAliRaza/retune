@@ -11,7 +11,10 @@ struct LumenApp: App {
             RootView()
                 .environment(model)
                 .frame(minWidth: 980, minHeight: 620)
-                .onAppear { appDelegate.model = model }
+                .onAppear {
+                    appDelegate.model = model
+                    DevPlayback.startIfRequested(model)
+                }
         }
         .defaultSize(width: 1360, height: 860)
         .commands { LumenCommands(model: model) }

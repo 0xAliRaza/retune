@@ -22,7 +22,7 @@ actor ImagePipeline {
         configuration.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 1 << 30, directory: cacheDirectory)
         configuration.requestCachePolicy = .returnCacheDataElseLoad
         configuration.timeoutIntervalForRequest = 20
-        configuration.httpMaximumConnectionsPerHost = 6
+        configuration.httpMaximumConnectionsPerHost = 8
         session = URLSession(configuration: configuration)
     }
 
