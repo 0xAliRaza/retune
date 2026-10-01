@@ -37,9 +37,11 @@ struct PosterCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            RemoteImage(url: artwork, maxPixelSize: 420) { ArtworkPlaceholder(title: title) }
+            // Fixed 2:3 box; the artwork fills and is clipped to it whatever its own shape.
+            Color.clear
                 .aspectRatio(2 / 3, contentMode: .fit)
                 .frame(maxWidth: .infinity)
+                .overlay { RemoteImage(url: artwork, maxPixelSize: 420) { ArtworkPlaceholder(title: title) } }
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(alignment: .topLeading) { badges }
                 .overlay(alignment: .bottom) { progressBar }
@@ -98,62 +100,6 @@ struct PosterCard: View {
             .buttonStyle(.plain)
             .help("Play")
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
-        }
-    }
-}
-
-// MARK: - Continue watching
-
-struct ContinueWatchingGrid: View {
-    @Environment(AppModel.self) private var model
-    let entries: [WatchProgress]
-
-    private let columns = [GridItem(.adaptive(minimum: 260, maximum: 340), spacing: 20, alignment: .top)]
-
-    var body: some View {
-        if entries.isEmpty {
-            ContentUnavailableView("Nothing in progress", systemImage: "play.circle",
-                                   description: Text("Movies and episodes you start will appear here so you can pick up where you left off."))
-        } else {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 22) {
-                    ForEach(entries, id: \.item.id) { entry in
-                        Button { model.resume(entry) } label: { ResumeCard(entry: entry) }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button("Resume", systemImage: "play.fill") { model.resume(entry) }
-                                Button("Remove from Continue Watching", systemImage: "minus.circle") {
-                                    withAnimation { model.removeFromContinueWatching(entry) }
-                                }
-                            }
-                    }
-                }
-                .padding(24)
-            }
-        }
-    }
-}
-
-private struct ResumeCard: View {
-    let entry: WatchProgress
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RemoteImage(url: entry.item.artwork, maxPixelSize: 600) { ArtworkPlaceholder(title: entry.item.title) }
-                .frame(height: 150)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .clipShape(.rect(cornerRadius: 10))
-                .overlay(alignment: .bottom) {
-                    ProgressView(value: entry.fraction).tint(.accentColor).padding(10)
-                }
-                .overlay {
-                    Image(systemName: "play.fill").font(.title2).foregroundStyle(.white)
-                        .frame(width: 48, height: 48).background(.ultraThinMaterial, in: .circle)
-                }
-            Text(entry.item.title).font(.callout.weight(.medium)).lineLimit(1)
-            Text([entry.item.subtitle, Format.remaining(entry.remaining)].compactMap { $0 }.joined(separator: " · "))
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 }

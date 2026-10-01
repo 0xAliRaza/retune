@@ -72,15 +72,31 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         self.url = url
     }
 
+    /// nil when the file is missing. A file that exists but can't be decoded is moved aside to
+    /// `<name>.corrupt-<timestamp>` first, so the next save can't silently destroy what was in it.
     public func load() -> Value? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Value.self, from: data)
+        if let value = try? JSONDecoder().decode(Value.self, from: data) { return value }
+        let backup = url.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+        try? FileManager.default.moveItem(at: url, to: backup)
+        return nil
     }
 
+    /// Writes atomically with owner-only permissions from the first byte (library and secrets hold private data).
     public func save(_ value: Value) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(value)
-        try data.write(to: url, options: .atomic)
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        guard fileManager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        // rename(2) atomically replaces the target and keeps the temp file's 0600 mode
+        // (FileManager.replaceItemAt would carry over the old file's permissions).
+        guard rename(temporary.path, url.path) == 0 else {
+            try? fileManager.removeItem(at: temporary)
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 
     public func delete() {

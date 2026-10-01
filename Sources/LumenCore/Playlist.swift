@@ -100,10 +100,18 @@ public struct PlaybackItem: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var isLive: Bool { kind == .live }
+
+    public func with(url newURL: URL) -> PlaybackItem {
+        PlaybackItem(id: id, kind: kind, title: title, subtitle: subtitle, url: newURL,
+                     artwork: artwork, streamID: streamID, parentID: parentID)
+    }
 }
 
 /// Stable keys used for favorites and watch progress, scoped per playlist.
 public enum ContentKey {
+    /// Prefix shared by every key belonging to one playlist.
+    public static func playlistPrefix(_ playlist: UUID) -> String { playlist.uuidString + "/" }
+
     public static func make(playlist: UUID, kind: ContentKind, id: String) -> String {
         "\(playlist.uuidString)/\(kind.rawValue)/\(id)"
     }

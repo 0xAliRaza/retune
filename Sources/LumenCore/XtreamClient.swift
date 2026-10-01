@@ -107,19 +107,45 @@ public struct XtreamClient: Sendable {
     }
 
     private func streamURL(kind: String, id: String, ext: String) -> URL {
-        credentials.server
-            .appendingPathComponent(kind)
-            .appendingPathComponent(credentials.username)
-            .appendingPathComponent(credentials.password)
-            .appendingPathComponent("\(id).\(ext)")
+        streamURL(kind: kind, file: "\(id).\(ext)")
+    }
+
+    /// `appendingPathComponent` leaves "/" unescaped, which would split a password like "a/b" into two segments.
+    private func streamURL(kind: String, file: String) -> URL {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove("/")
+        let segments = [kind, credentials.username, credentials.password, file]
+            .map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0 }
+        let base = credentials.server.absoluteString.hasSuffix("/") ? String(credentials.server.absoluteString.dropLast()) : credentials.server.absoluteString
+        return URL(string: base + "/" + segments.joined(separator: "/"))!
+    }
+
+    // MARK: Credential-free locators
+
+    /// Watch history stores `lumen://<kind>/<file>` instead of the real stream URL, so the password never
+    /// lands in library.json and items keep working after the password or server changes.
+    public static let locatorScheme = "lumen"
+
+    public static func locator(for streamURL: URL) -> URL? {
+        let parts = streamURL.path.split(separator: "/").map(String.init)
+        guard parts.count >= 4, ["movie", "series", "live"].contains(parts[parts.count - 4]) else { return nil }
+        return URL(string: "\(locatorScheme)://\(parts[parts.count - 4])/\(parts[parts.count - 1])")
+    }
+
+    /// Turns a locator back into a playable URL for the current credentials; other URLs pass through.
+    public func resolve(_ url: URL) -> URL {
+        guard url.scheme == Self.locatorScheme, let kind = url.host() else { return url }
+        return streamURL(kind: kind, file: url.lastPathComponent)
     }
 
     // MARK: Transport
 
     private func list<T: Decodable>(_ type: T.Type, action: String) async throws -> [T] {
         let data = try await fetch(action: action)
-        // Panels answer an empty section with `[]`, `{}` or an empty body.
-        if data.isEmpty || data == Data("{}".utf8) { return [] }
+        // An empty body is how throttling panels answer bursts; treating it as "no rows" would cache an
+        // empty section over a good one. Genuinely empty sections come back as `[]` or `{}`.
+        if data.isEmpty { throw LumenError.emptyResponse }
+        if data == Data("{}".utf8) { return [] }
         guard let rows = try? JSONDecoder().decode([Failable<T>].self, from: data) else {
             throw LumenError.unreadableResponse
         }
@@ -142,7 +168,8 @@ public struct XtreamClient: Sendable {
             do {
                 let (data, response) = try await session.data(from: url)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-                if status == 200 { return data }
+                if status == 200, !(data.isEmpty && action != nil) { return data }
+                if status == 200 { lastError = LumenError.emptyResponse; continue }
                 lastError = LumenError.http(status)
                 guard status == 222 || status == 429 || status >= 500 else { throw lastError }
             } catch let error as URLError where error.code == .timedOut || error.code == .networkConnectionLost {

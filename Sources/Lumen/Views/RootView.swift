@@ -6,6 +6,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var window: NSWindow?
     @State private var swipeMonitor: SwipeBackMonitor?
+    @State private var keyRouter: PaneKeyRouter?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -29,9 +31,18 @@ struct RootView: View {
         .onAppear {
             // Back-swipe pops movie/series pages; the player installs its own while it's open.
             let monitor = SwipeBackMonitor(canGoBack: { !model.isPlayerPresented && !model.detailPath.isEmpty },
-                                           onBack: { model.detailPath.removeLast() })
+                                           onBack: { model.goBack() })
             monitor.start(window: { window })
             swipeMonitor = monitor
+            let router = PaneKeyRouter(model: model)
+            router.start(window: { window })
+            keyRouter = router
+        }
+        .onDisappear {
+            swipeMonitor?.stop()
+            keyRouter?.stop()
+            // Closing the main window (e.g. with Settings still open) must not leave audio playing.
+            model.session.stop()
         }
         .sheet(isPresented: $model.isAddingPlaylist) { PlaylistEditor(existing: nil) }
         .sheet(isPresented: $model.isShowingShortcuts) { ShortcutsView() }
@@ -60,6 +71,8 @@ struct RootView: View {
             }
         }
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search \(model.section.title)")
+        .searchFocusedIfAvailable($isSearchFocused)
+        .onChange(of: model.searchFocusRequests) { isSearchFocused = true }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.isRefreshing {
@@ -77,6 +90,7 @@ struct RootView: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -105,6 +119,9 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .focused($isFocused)
+        .onChange(of: isFocused) { if isFocused { model.focusedPane = .sidebar } }
+        .onChange(of: model.focusRequest) { if model.isRequested(.sidebar) { isFocused = true } }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 if let account = model.account { AccountBadge(account: account) }
@@ -159,6 +176,8 @@ struct CategoryColumn: View {
     @Environment(AppModel.self) private var model
     @State private var categoryQuery = ""
     @State private var confirmClear: ClearTarget?
+    @FocusState private var listFocused: Bool
+    @FocusState private var filterFocused: Bool
 
     var body: some View {
         Group {
@@ -202,9 +221,13 @@ struct CategoryColumn: View {
             }
             Section("Categories") { rows(others, loaded: loaded) }
         }
+        // On the List itself: applied to the whole column, focus would land in the filter field above it.
+        .focused($listFocused)
+        .onChange(of: listFocused) { if listFocused { model.focusedPane = .categories } }
         .safeAreaInset(edge: .top) {
             TextField("Filter categories", text: $categoryQuery)
                 .textFieldStyle(.roundedBorder)
+                .focused($filterFocused)
                 .padding(.horizontal, 10).padding(.vertical, 6)
         }
         .safeAreaInset(edge: .bottom) {
@@ -218,6 +241,13 @@ struct CategoryColumn: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .help("Manage hidden categories in Settings")
+            }
+        }
+        .onChange(of: model.focusRequest) {
+            switch model.focusRequest?.target {
+            case .pane(.categories): listFocused = true
+            case .categoryFilter: filterFocused = true
+            default: break
             }
         }
         .confirmationDialog(confirmClear?.title ?? "", isPresented: Binding(get: { confirmClear != nil }, set: { if !$0 { confirmClear = nil } }),
@@ -331,7 +361,13 @@ struct ContentArea: View {
         if let locked = model.selectedLockedCategory {
             LockedCategoryView(categoryID: locked)
         } else if model.filter == .continueWatching, !model.isSearching {
-            ContinueWatchingGrid(entries: model.continueWatching)
+            BrowseCollection(items: model.continueWatching.map(ResumeEntry.init), describe: model.entry(for:),
+                             onOpen: { model.resume($0.progress) }) { entry in
+                Button("Resume", systemImage: "play.fill") { model.resume(entry.progress) }
+                Button("Remove from Continue Watching", systemImage: "minus.circle") {
+                    withAnimation { model.removeFromContinueWatching(entry.progress) }
+                }
+            }
         } else {
             switch model.section {
             case .live:
@@ -345,10 +381,11 @@ struct ContentArea: View {
                     }
                 }
             case .movies:
-                BrowseCollection(items: model.visibleMovies, describe: model.entry(for:),
+                let movies = model.visibleMovies
+                BrowseCollection(items: movies, describe: model.entry(for:),
                                  onOpen: { model.detailPath.append(.movie($0)) },
-                                 onPlay: { model.play(movie: $0) }) { movie in
-                    Button("Play", systemImage: "play.fill") { model.play(movie: movie) }
+                                 onPlay: { model.play(movie: $0, in: movies) }) { movie in
+                    Button("Play", systemImage: "play.fill") { model.play(movie: movie, in: movies) }
                     Button("Show Details", systemImage: "info.circle") { model.detailPath.append(.movie(movie)) }
                     FavoriteButton(kind: .movie, id: movie.id)
                     WatchedButton(isWatched: model.isWatched(.movie, movie.id)) { model.setWatched(movie: movie, $0) }
@@ -404,11 +441,26 @@ struct EmptyResults: View {
     var body: some View {
         if model.isSearching {
             ContentUnavailableView.search(text: model.searchText)
+        } else if model.filter == .continueWatching {
+            ContentUnavailableView("Nothing in progress", systemImage: "play.circle",
+                                   description: Text("Movies and episodes you start will appear here so you can pick up where you left off."))
         } else if model.filter == .favorites {
             ContentUnavailableView("No favorites yet", systemImage: "star",
                                    description: Text("Right-click anything or use the star to add it here."))
         } else {
             ContentUnavailableView("Nothing here", systemImage: "tray")
+        }
+    }
+}
+
+private extension View {
+    /// `searchFocused` exists from macOS 15; on 14 ⌘F simply does nothing.
+    @ViewBuilder
+    func searchFocusedIfAvailable(_ binding: FocusState<Bool>.Binding) -> some View {
+        if #available(macOS 15.0, *) {
+            searchFocused(binding)
+        } else {
+            self
         }
     }
 }

@@ -97,10 +97,12 @@ struct MovieDetailView: View {
                                 Label("Resume · \(Format.remaining(progress.remaining))", systemImage: "play.fill")
                             }
                             .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
                             Button { model.play(movie: movie, resume: false) } label: { Label("Start Over", systemImage: "gobackward") }
                         } else {
                             Button { model.play(movie: movie, resume: false) } label: { Label("Play", systemImage: "play.fill") }
                                 .buttonStyle(.borderedProminent)
+                                .keyboardShortcut(.defaultAction)
                         }
                         FavoriteToggle(kind: .movie, id: movie.id)
                         TrailerButton(youtubeID: info?.youtubeTrailer)
@@ -135,6 +137,7 @@ struct SeriesDetailView: View {
                         if let (episode, label) = primaryEpisode {
                             Button { play(episode) } label: { Label(label, systemImage: "play.fill") }
                                 .buttonStyle(.borderedProminent)
+                                .keyboardShortcut(.defaultAction)
                         }
                         FavoriteToggle(kind: .series, id: series.id)
                         TrailerButton(youtubeID: detail?.info.youtubeTrailer)
@@ -200,16 +203,18 @@ struct SeriesDetailView: View {
         return detail.seasons.first { $0.number == seasonNumber } ?? detail.seasons.first
     }
 
-    /// "Resume S1 E3" if something is in progress, otherwise the first episode.
+    /// Netflix-style main button: resume what's in progress, else the episode after the last one finished.
     private var primaryEpisode: (Episode, String)? {
         guard let detail else { return nil }
         let all = detail.seasons.flatMap(\.episodes)
-        let inProgress = all
-            .compactMap { episode in model.progress(.episode, episode.id).map { (episode, $0) } }
-            .filter { $0.1.isResumable }
-            .max { $0.1.updatedAt < $1.1.updatedAt }
-        if let (episode, _) = inProgress { return (episode, "Resume S\(episode.season) E\(episode.number)") }
-        return all.first.map { ($0, "Play S\($0.season) E\($0.number)") }
+        guard let pick = EpisodePicker.pick(count: all.count, progress: { model.progress(.episode, all[$0].id) }) else { return nil }
+        switch pick {
+        case .resume(let index): return (all[index], "Resume S\(all[index].season) E\(all[index].number)")
+        case .next(let index): return (all[index], "Play Next · S\(all[index].season) E\(all[index].number)")
+        case .start(let index):
+            let watchedAny = all.contains { model.isWatched(.episode, $0.id) }
+            return (all[index], watchedAny ? "Watch Again" : "Play S\(all[index].season) E\(all[index].number)")
+        }
     }
 
     private func play(_ episode: Episode) {

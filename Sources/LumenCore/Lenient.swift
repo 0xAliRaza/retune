@@ -21,20 +21,24 @@ extension KeyedDecodingContainer {
 
     func lenientInt(_ key: Key) -> Int? {
         if let value = try? decodeIfPresent(Int.self, forKey: key) { return value }
-        if let value = try? decodeIfPresent(Double.self, forKey: key) { return Int(value) }
+        if let value = try? decodeIfPresent(Double.self, forKey: key) { return Self.safeInt(value) }
         if let text = try? decodeIfPresent(String.self, forKey: key) {
             let trimmed = text.trimmingCharacters(in: .whitespaces)
-            return Int(trimmed) ?? Double(trimmed).map { Int($0) }
+            return Int(trimmed) ?? Double(trimmed).flatMap(Self.safeInt)
         }
         return nil
     }
 
+    /// `Int(Double)` traps on NaN, infinity and out-of-range values; panel data can contain all three.
+    private static func safeInt(_ value: Double) -> Int? {
+        guard value.isFinite, value > Double(Int.min), value < Double(Int.max) else { return nil }
+        return Int(value)
+    }
+
     func lenientDouble(_ key: Key) -> Double? {
-        if let value = try? decodeIfPresent(Double.self, forKey: key) { return value }
-        if let text = try? decodeIfPresent(String.self, forKey: key) {
-            return Double(text.trimmingCharacters(in: .whitespaces))
-        }
-        return nil
+        let value = (try? decodeIfPresent(Double.self, forKey: key))
+            ?? (try? decodeIfPresent(String.self, forKey: key)).flatMap { $0.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) } }
+        return value.flatMap { $0.isFinite ? $0 : nil }
     }
 
     func lenientBool(_ key: Key) -> Bool {

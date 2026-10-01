@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 public struct WatchProgress: Codable, Hashable, Sendable {
-    public let item: PlaybackItem
+    public var item: PlaybackItem
     public var position: Double
     public var duration: Double
     public var updatedAt: Date
@@ -41,7 +41,7 @@ public struct LibraryState: Codable, Sendable {
     public private(set) var pinHash: String?
 
     public static let recentChannelLimit = 30
-    public static let progressLimit = 500
+    public static let progressLimit = 2000
 
     public init() {}
 
@@ -53,7 +53,9 @@ public struct LibraryState: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         favorites = try c.decodeIfPresent(Set<String>.self, forKey: .favorites) ?? []
-        progress = try c.decodeIfPresent([String: WatchProgress].self, forKey: .progress) ?? [:]
+        // One malformed entry shouldn't take the rest of the history with it.
+        progress = (try? c.decodeIfPresent([String: Failable<WatchProgress>].self, forKey: .progress))?
+            .flatMap { $0 }?.compactMapValues(\.value) ?? [:]
         recentChannels = try c.decodeIfPresent([String].self, forKey: .recentChannels) ?? []
         hiddenCategories = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenCategories) ?? []
         lockedCategories = try c.decodeIfPresent(Set<String>.self, forKey: .lockedCategories) ?? []
@@ -130,12 +132,12 @@ public struct LibraryState: Codable, Sendable {
     public mutating func removeRecentChannel(_ key: String) { recentChannels.removeAll { $0 == key } }
 
     public mutating func clearContinueWatching(playlist: UUID) {
-        let prefix = playlist.uuidString + "/"
+        let prefix = ContentKey.playlistPrefix(playlist)
         progress = progress.filter { !($0.key.hasPrefix(prefix) && $0.value.isResumable) }
     }
 
     public mutating func clearRecentChannels(playlist: UUID) {
-        let prefix = playlist.uuidString + "/"
+        let prefix = ContentKey.playlistPrefix(playlist)
         recentChannels.removeAll { $0.hasPrefix(prefix) }
     }
 
@@ -146,10 +148,30 @@ public struct LibraryState: Codable, Sendable {
     public mutating func recordProgress(key: String, item: PlaybackItem, position: Double, duration: Double, at date: Date = .now) {
         guard duration > 0, position.isFinite, duration.isFinite else { return }
         progress[key] = WatchProgress(item: item, position: position, duration: duration, updatedAt: date)
-        if progress.count > Self.progressLimit {
-            let oldest = progress.sorted { $0.value.updatedAt < $1.value.updatedAt }.prefix(progress.count - Self.progressLimit)
-            oldest.forEach { progress.removeValue(forKey: $0.key) }
+        pruneProgress()
+    }
+
+    /// Over the cap, drop barely-started and in-progress entries before "watched" marks, oldest first.
+    private mutating func pruneProgress() {
+        guard progress.count > Self.progressLimit else { return }
+        let ordered = progress.sorted { lhs, rhs in
+            if lhs.value.isFinished != rhs.value.isFinished { return !lhs.value.isFinished }
+            return lhs.value.updatedAt < rhs.value.updatedAt
         }
+        ordered.prefix(progress.count - Self.progressLimit).forEach { progress.removeValue(forKey: $0.key) }
+    }
+
+    /// Replaces stored stream URLs with credential-free locators (see `XtreamClient.locator`).
+    /// Returns true when anything changed, so callers know to persist the cleaned state.
+    @discardableResult
+    public mutating func sanitizeStreamURLs() -> Bool {
+        var changed = false
+        for (key, entry) in progress {
+            guard let locator = XtreamClient.locator(for: entry.item.url) else { continue }
+            progress[key]?.item = entry.item.with(url: locator)
+            changed = true
+        }
+        return changed
     }
 
     public mutating func recordChannel(key: String) {
@@ -160,7 +182,7 @@ public struct LibraryState: Codable, Sendable {
 
     /// Resumable items for a playlist, most recent first. Episodes collapse to one entry per series.
     public func continueWatching(playlist: UUID) -> [WatchProgress] {
-        let prefix = playlist.uuidString + "/"
+        let prefix = ContentKey.playlistPrefix(playlist)
         var seenSeries: Set<String> = []
         return progress
             .filter { $0.key.hasPrefix(prefix) && $0.value.isResumable }
@@ -179,7 +201,7 @@ public struct LibraryState: Codable, Sendable {
     }
 
     public mutating func removeAll(playlist: UUID) {
-        let prefix = playlist.uuidString + "/"
+        let prefix = ContentKey.playlistPrefix(playlist)
         favorites = favorites.filter { !$0.hasPrefix(prefix) }
         progress = progress.filter { !$0.key.hasPrefix(prefix) }
         recentChannels.removeAll { $0.hasPrefix(prefix) }

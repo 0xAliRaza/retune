@@ -12,13 +12,17 @@ final class PlaybackSession {
     private(set) var queue: [PlaybackItem] = []
     private(set) var index = 0
     private(set) var epg: [EPGEntry] = []
+    /// Automatic reconnects used for the current item (0 = first try); shown on the tuning card.
+    private(set) var reconnectAttempt = 0
+
     /// Seconds left before the next episode starts automatically; nil when no countdown is running.
     private(set) var autoplayCountdown: Int?
 
     /// Heading for the list panel, e.g. the category or series the queue came from.
     var queueTitle: String?
 
-    @ObservationIgnored var onProgress: ((PlaybackItem, Double, Double) -> Void)?
+    /// (item, position, duration, isFinal): final saves happen on stop, switch and end of file.
+    @ObservationIgnored var onProgress: ((PlaybackItem, Double, Double, Bool) -> Void)?
     /// Saved resume point for an item, used when switching within the queue.
     @ObservationIgnored var resumePosition: ((PlaybackItem) -> Double?)?
     @ObservationIgnored var epgProvider: ((PlaybackItem) async -> [EPGEntry])?
@@ -35,6 +39,10 @@ final class PlaybackSession {
 
     init() {
         engine.onEndOfFile = { [weak self] in self?.handleEndOfFile() }
+        // Replaying or seeking back from the end must not let the countdown fire anyway.
+        engine.onLeftEnd = { [weak self] in self?.cancelAutoplay() }
+        engine.onError = { [weak self] message in self?.handleFailure(message) }
+        engine.onPlaybackStarted = { [weak self] in self?.reconnectAttempt = 0 }
     }
 
     var current: PlaybackItem? { queue.indices.contains(index) ? queue[index] : nil }
@@ -74,7 +82,9 @@ final class PlaybackSession {
 
     func retry() {
         guard let current else { return }
-        engine.load(current.url, startAt: engine.position > 0 ? engine.position : nil)
+        reconnectAttempt = 0
+        // A live stream's position is a broadcast timestamp, not something to seek back to.
+        engine.load(current.url, startAt: !current.isLive && engine.position > 0 ? engine.position : nil)
     }
 
     func stop() {
@@ -95,21 +105,16 @@ final class PlaybackSession {
         autoplayCountdown = nil
     }
 
-    /// Live TV wraps around the channel list; on-demand queues stop at the ends.
     private func step(_ delta: Int) {
-        guard !queue.isEmpty, let current else { return }
-        var target = index + delta
-        if current.isLive {
-            target = (target + queue.count) % queue.count
-        } else if !queue.indices.contains(target) {
-            return
-        }
+        guard let current,
+              let target = QueueNavigation.target(from: index, delta: delta, count: queue.count, wraps: current.isLive) else { return }
         saveProgress()
         start(at: target, startAt: resumePosition?(queue[target]), debounce: true)
     }
 
     private func start(at position: Int, startAt: Double?, debounce: Bool = false) {
         cancelAutoplay()
+        reconnectAttempt = 0
         if position != index, current != nil { previousIndex = index }
         index = position
         let item = queue[position]
@@ -129,16 +134,38 @@ final class PlaybackSession {
 
     private func begin(_ item: PlaybackItem, startAt: Double?) {
         engine.load(item.url, startAt: startAt)
-        if item.isLive { onProgress?(item, 0, 0) }
+        if item.isLive { onProgress?(item, 0, 0, true) }
         startProgressTimer()
         loadEPG(for: item)
     }
 
+    /// Retries with backoff before surfacing an error. On-demand items resume where they stopped.
+    private func handleFailure(_ message: String) {
+        guard let current else { return }
+        guard let delay = ReconnectPolicy.delay(afterFailedAttempts: reconnectAttempt) else {
+            engine.showError(message)
+            return
+        }
+        reconnectAttempt += 1
+        let resumeAt = current.isLive || engine.position <= 0 ? nil : engine.position
+        engine.prepareForTuning()
+        tuneTask?.cancel()
+        tuneTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, self.current == current else { return }
+            self.engine.load(current.url, startAt: resumeAt)
+        }
+    }
+
     private func handleEndOfFile() {
-        guard let current, !current.isLive else { return }
+        guard let current else { return }
+        // A live stream "ending" means the feed dropped; reconnect instead of sitting on the last frame.
+        if current.isLive {
+            handleFailure("The live stream stopped.")
+            return
+        }
         saveProgress()
-        // Only a series flows on by itself; a movie ending shouldn't roll into the next title in its category.
-        guard current.kind == .episode, nextItem?.kind == .episode, hasNext, PlayerPreferences.autoplayNextEpisode else { return }
+        guard QueueNavigation.shouldAutoplay(after: current, next: nextItem, enabled: PlayerPreferences.autoplayNextEpisode) else { return }
         autoplayCountdown = 8
         countdownTask = Task { [weak self] in
             while let self, let remaining = self.autoplayCountdown, remaining > 0 {
@@ -156,24 +183,30 @@ final class PlaybackSession {
         progressTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
-                self?.saveProgress()
+                self?.saveProgress(isFinal: false)
             }
         }
     }
 
-    private func saveProgress() {
+    private func saveProgress(isFinal: Bool = true) {
         guard let current, !current.isLive, engine.duration > 0 else { return }
-        onProgress?(current, engine.position, engine.duration)
+        onProgress?(current, engine.position, engine.duration, isFinal)
     }
 
+    /// Fetches the guide for a live channel and refetches when the current programme ends,
+    /// so Now/Next stays correct during long viewing.
     private func loadEPG(for item: PlaybackItem) {
         epg = []
         epgTask?.cancel()
         guard item.isLive, let epgProvider else { return }
         epgTask = Task { [weak self] in
-            let entries = await epgProvider(item)
-            guard !Task.isCancelled, self?.current?.id == item.id else { return }
-            self?.epg = entries
+            while !Task.isCancelled {
+                let entries = await epgProvider(item)
+                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
+                self.epg = entries
+                guard let end = self.nowPlaying?.end ?? entries.first(where: { $0.start > .now })?.start else { return }
+                try? await Task.sleep(for: .seconds(max(end.timeIntervalSinceNow, 60)))
+            }
         }
     }
 }

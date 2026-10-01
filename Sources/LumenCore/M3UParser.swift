@@ -69,7 +69,9 @@ public enum M3UParser {
         var channels: [Channel] = []
         var movies: [Movie] = []
 
-        for entry in entries {
+        var seenURLs: Set<URL> = []
+        // URLs double as ids, so a playlist listing the same stream twice would collide.
+        for entry in entries where seenURLs.insert(entry.url).inserted {
             let group = entry.group ?? "Uncategorized"
             let id = entry.url.absoluteString
             if isOnDemand(entry.url) {

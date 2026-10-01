@@ -14,6 +14,8 @@ actor ImagePipeline {
 
     init() {
         memory.countLimit = 600
+        // Decoded bitmaps, not files: a 1600 px backdrop is ~5–10 MB in memory.
+        memory.totalCostLimit = 300 << 20
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Lumen/Artwork", isDirectory: true)
         let configuration = URLSessionConfiguration.default
@@ -32,15 +34,27 @@ actor ImagePipeline {
 
         let session = session
         let task = Task<NSImage?, Never>.detached(priority: .utility) {
-            guard let (data, response) = try? await session.data(from: url),
-                  (response as? HTTPURLResponse)?.statusCode ?? 200 == 200 else { return nil }
-            return Self.downsample(data, maxPixelSize: maxPixelSize)
+            guard let (data, response) = try? await session.data(from: url) else { return nil }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            guard status == 200, let image = Self.downsample(data, maxPixelSize: maxPixelSize) else {
+                // Missing or undecodable artwork won't fix itself; timeouts and offline blips might.
+                if status == 404 || status == 410 || status == 200 { await self.markFailed(url) }
+                return nil
+            }
+            return image
         }
         inFlight[key as String] = task
         let image = await task.value
         inFlight[key as String] = nil
-        if let image { memory.setObject(image, forKey: key) } else { failed.insert(url) }
+        if let image {
+            let cost = Int(image.size.width * image.size.height * 4)
+            memory.setObject(image, forKey: key, cost: cost)
+        }
         return image
+    }
+
+    private func markFailed(_ url: URL) {
+        failed.insert(url)
     }
 
     func clear() {

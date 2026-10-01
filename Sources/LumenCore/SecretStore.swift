@@ -28,6 +28,5 @@ public struct SecretStore: Sendable {
 
     private func write(_ secrets: [String: String]) {
         try? store.save(secrets)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: store.url.path)
     }
 }

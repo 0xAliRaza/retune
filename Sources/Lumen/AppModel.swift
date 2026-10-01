@@ -133,6 +133,11 @@ struct LoadedCatalog {
         }
     }
 
+    /// Display name for a provider category (providers often pad names with spaces).
+    func categoryName(_ id: String, in section: LibrarySection) -> String? {
+        categories(for: section).first { $0.id == id }?.name.trimmingCharacters(in: .whitespaces)
+    }
+
     func total(_ section: LibrarySection) -> Int {
         switch section {
         case .live: channels.items.count
@@ -189,6 +194,34 @@ final class AppModel {
     })
     var isAddingPlaylist = false
     var isShowingShortcuts = false
+    /// Bumped by ⌘F; the root view moves focus into the search field.
+    var searchFocusRequests = 0
+
+    // MARK: Keyboard focus across columns
+
+    struct FocusRequest: Equatable {
+        enum Target: Equatable { case pane(PaneNavigation.Pane), categoryFilter }
+        let target: Target
+        let id: Int
+    }
+
+    /// The column holding keyboard focus, reported by each column as it gains focus.
+    @ObservationIgnored var focusedPane: PaneNavigation.Pane?
+    private(set) var focusRequest: FocusRequest?
+
+    func focus(_ pane: PaneNavigation.Pane) { request(.pane(pane)) }
+    func focusCategoryFilter() { request(.categoryFilter) }
+    func focusSearch() { searchFocusRequests += 1 }
+
+    private func request(_ target: FocusRequest.Target) {
+        focusRequest = FocusRequest(target: target, id: (focusRequest?.id ?? 0) + 1)
+    }
+
+    func isRequested(_ pane: PaneNavigation.Pane) -> Bool { focusRequest?.target == .pane(pane) }
+
+    func goBack() {
+        if !detailPath.isEmpty { detailPath.removeLast() }
+    }
     var editingPlaylist: Playlist?
 
     let session: PlaybackSession
@@ -200,6 +233,9 @@ final class AppModel {
     let secrets = SecretStore()
     @ObservationIgnored private var librarySaveTask: Task<Void, Never>?
     @ObservationIgnored private var loadGeneration = 0
+    @ObservationIgnored private var refreshTask: (generation: Int, task: Task<Void, Never>)?
+    /// When each item's progress was last written to the observed library (see `recordProgress`).
+    @ObservationIgnored private var lastProgressCommit: [String: Date] = [:]
 
     /// Catalogs refresh in the background once they are older than this.
     private let catalogMaxAge: TimeInterval = 12 * 60 * 60
@@ -208,8 +244,10 @@ final class AppModel {
         session = PlaybackSession()
         playlists = playlistStore.load() ?? []
         library = libraryStore.load() ?? LibraryState()
-        session.onProgress = { [weak self] item, position, duration in
-            self?.recordProgress(item: item, position: position, duration: duration)
+        // Older builds stored full stream URLs (with the password) in watch history.
+        if library.sanitizeStreamURLs() { try? libraryStore.save(library) }
+        session.onProgress = { [weak self] item, position, duration, isFinal in
+            self?.recordProgress(item: item, position: position, duration: duration, isFinal: isFinal)
         }
         session.epgProvider = { [weak self] item in await self?.epg(for: item) ?? [] }
         session.resumePosition = { [weak self] item in
@@ -267,7 +305,10 @@ final class AppModel {
         let generation = loadGeneration
         resetBrowsing()
         account = nil
-        guard let playlist = activePlaylist else { loaded = nil; status = .idle; return }
+        // Never show (or key favorites against) the previous playlist's catalog while this one loads.
+        loaded = nil
+        guard let playlist = activePlaylist else { status = .idle; return }
+        if section == .series, !playlist.supportsSeries { section = .live }
 
         let client = credentials(for: playlist).map { XtreamClient(credentials: $0) }
         let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
@@ -284,15 +325,31 @@ final class AppModel {
         } else {
             await refresh()
         }
-        if generation == loadGeneration, let client { account = try? await client.authenticate() }
+        if generation == loadGeneration, let client {
+            let info = try? await client.authenticate()
+            if generation == loadGeneration { account = info }
+        }
     }
 
-    /// Downloads the full catalog for the active playlist and replaces the cache.
+    /// Downloads the full catalog for the active playlist and replaces the cache. A refresh already
+    /// running for this playlist is joined; one left over from a previous playlist is cancelled.
     func refresh() async {
-        guard let playlist = activePlaylist, !isRefreshing else { return }
+        if let running = refreshTask, running.generation == loadGeneration {
+            await running.task.value
+            return
+        }
+        refreshTask?.task.cancel()
         let generation = loadGeneration
+        let task = Task { await performRefresh(generation: generation) }
+        refreshTask = (generation, task)
+        await task.value
+        if refreshTask?.generation == generation { refreshTask = nil }
+    }
+
+    private func performRefresh(generation: Int) async {
+        guard let playlist = activePlaylist else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer { if generation == loadGeneration { isRefreshing = false } }
         if loaded == nil { status = .loading("Downloading channels, movies and series…") }
 
         do {
@@ -330,9 +387,12 @@ final class AppModel {
         filter = defaultFilter(for: section)
     }
 
-    /// Movies default to the first visible, unlocked category: rendering 60k+ posters under "All" is slow to scan anyway.
+    /// Movies and Series open on Continue Watching when something is in progress, otherwise on the first
+    /// visible, unlocked category (rendering 60k+ posters under "All" is slow to scan anyway). Live opens on All.
     private func defaultFilter(for section: LibrarySection) -> CategoryFilter {
-        guard section != .live, let first = browsableCategories(for: section).first(where: { !isLocked($0.id, in: section) }) else { return .all }
+        guard section != .live else { return .all }
+        if !continueWatching.isEmpty { return .continueWatching }
+        guard let first = browsableCategories(for: section).first(where: { !isLocked($0.id, in: section) }) else { return .all }
         return .category(first.id)
     }
 
@@ -486,7 +546,7 @@ final class AppModel {
 
     func setWatched(movie: Movie, _ watched: Bool) {
         if watched {
-            guard let item = movieItem(movie) else { return }
+            guard let item = movieItem(movie).map(storable) else { return }
             library.markWatched(key: key(.movie, movie.id), item: item, duration: progress(.movie, movie.id)?.duration)
         } else {
             library.markUnwatched(key: key(.movie, movie.id))
@@ -495,8 +555,9 @@ final class AppModel {
     }
 
     func setWatched(episode: Episode, of series: Series, _ watched: Bool) {
-        if watched, let client = loaded?.client {
-            let item = episodeItem(episode, of: series, client: client)
+        if watched {
+            guard let client = loaded?.client else { return }
+            let item = storable(episodeItem(episode, of: series, client: client))
             library.markWatched(key: key(.episode, episode.id), item: item,
                                 duration: episode.durationSeconds.map(Double.init) ?? progress(.episode, episode.id)?.duration)
         } else {
@@ -583,7 +644,7 @@ final class AppModel {
         case .favorites: return "Favorites"
         case .continueWatching: return "Continue Watching"
         case .recent: return "Recently Watched"
-        case .category(let id): return loaded?.categories(for: section).first { $0.id == id }?.name ?? section.title
+        case .category(let id): return loaded?.categoryName(id, in: section) ?? section.title
         }
     }
 
@@ -602,13 +663,30 @@ final class AppModel {
 
     func progress(_ kind: ContentKind, _ id: String) -> WatchProgress? { library.progress[key(kind, id)] }
 
-    private func recordProgress(item: PlaybackItem, position: Double, duration: Double) {
+    /// Periodic ticks only reach the observed library every 30 s; stops, switches and endings always do.
+    /// Every library write re-renders the browse view under the player, which holds up to 65k items.
+    private func recordProgress(item: PlaybackItem, position: Double, duration: Double, isFinal: Bool) {
         if item.isLive {
             library.recordChannel(key: key(.live, item.streamID ?? item.id))
         } else {
-            library.recordProgress(key: key(item.kind, item.id), item: item, position: position, duration: duration)
+            let key = key(item.kind, item.id)
+            if !isFinal, let last = lastProgressCommit[key], Date().timeIntervalSince(last) < 30 { return }
+            lastProgressCommit[key] = Date()
+            library.recordProgress(key: key, item: storable(item), position: position, duration: duration)
         }
         scheduleLibrarySave()
+    }
+
+    /// Strips credentials from Xtream stream URLs before they're persisted.
+    private func storable(_ item: PlaybackItem) -> PlaybackItem {
+        XtreamClient.locator(for: item.url).map(item.with(url:)) ?? item
+    }
+
+    /// Turns a stored (credential-free) item back into a playable one for the current account.
+    private func playable(_ item: PlaybackItem) -> PlaybackItem? {
+        guard item.url.scheme == XtreamClient.locatorScheme else { return item }
+        guard let client = loaded?.client else { return nil }
+        return item.with(url: client.resolve(item.url))
     }
 
     private func scheduleLibrarySave() {
@@ -631,50 +709,43 @@ final class AppModel {
 
     func play(channel: Channel, in list: [Channel]) {
         guard let loaded else { return }
-        let (window, index) = queueWindow(list, around: channel)
-        startQueue(window.compactMap { liveItem($0, loaded: loaded) }, at: index, title: channel.categoryID.flatMap(categoryName))
+        startQueue(from: list, selected: channel, title: filterTitle) { self.liveItem($0, loaded: loaded) }
     }
 
-    /// Queues the list the movie was picked from (defaults to what's on screen) so N / the list panel can switch titles.
+    /// Queues the list the movie was picked from so ↑/↓ and the list panel can switch titles.
+    /// From a detail page there's no list in hand, so the current browse results are used.
     func play(movie: Movie, in list: [Movie]? = nil, resume: Bool = true) {
         let source = list ?? visibleMovies
-        let (window, index) = source.contains(movie) ? queueWindow(source, around: movie) : ([movie], 0)
-        let items = window.compactMap(movieItem)
-        guard items.indices.contains(index) else { return }
-        startQueue(items, at: index, title: list == nil ? filterTitle : nil,
-                   startAt: resume ? progress(.movie, movie.id)?.resumePosition : nil)
+        startQueue(from: source.contains(movie) ? source : [movie], selected: movie, title: filterTitle,
+                   startAt: resume ? progress(.movie, movie.id)?.resumePosition : nil, make: movieItem)
     }
 
     /// Plays an episode with the rest of the series queued for autoplay.
     func play(episode: Episode, of series: Series, seasons: [Season], resume: Bool = true) {
         guard let client = loaded?.client else { return }
-        let all = seasons.flatMap(\.episodes)
-        let items = all.map { episodeItem($0, of: series, client: client) }
-        startQueue(items, at: all.firstIndex(of: episode) ?? 0, title: series.name,
-                   startAt: resume ? progress(.episode, episode.id)?.resumePosition : nil)
+        startQueue(from: seasons.flatMap(\.episodes), selected: episode, title: series.name,
+                   startAt: resume ? progress(.episode, episode.id)?.resumePosition : nil) {
+            self.episodeItem($0, of: series, client: client)
+        }
     }
 
     /// Resumes one entry with the rest of Continue Watching queued alongside it.
     func resume(_ entry: WatchProgress) {
         let entries = continueWatching
-        let items = entries.contains(entry) ? entries.map(\.item) : [entry.item]
-        startQueue(items, at: items.firstIndex(of: entry.item) ?? 0, title: "Continue Watching", startAt: entry.resumePosition)
+        startQueue(from: entries.contains(entry) ? entries : [entry], selected: entry, title: "Continue Watching",
+                   startAt: entry.resumePosition) { self.playable($0.item) }
     }
 
-    private func startQueue(_ items: [PlaybackItem], at index: Int, title: String?, startAt: Double? = nil) {
-        session.queueTitle = title
-        session.play(items, at: index, startAt: startAt)
-        isPlayerPresented = true
-    }
-
-    private func queueWindow<Item: Equatable>(_ list: [Item], around item: Item) -> ([Item], Int) {
-        let position = list.firstIndex(of: item) ?? 0
+    /// Windows `list` around `selected`, builds playable items (skipping unplayable ones without
+    /// shifting the selection) and starts playback.
+    private func startQueue<Element: Equatable>(from list: [Element], selected: Element, title: String?,
+                                                startAt: Double? = nil, make: (Element) -> PlaybackItem?) {
+        guard let position = list.firstIndex(of: selected) else { return }
         let range = QueueWindow.range(count: list.count, around: position)
-        return (Array(list[range]), position - range.lowerBound)
-    }
-
-    private func categoryName(_ id: String) -> String? {
-        loaded?.categories(for: section).first { $0.id == id }?.name.trimmingCharacters(in: .whitespaces)
+        guard let queue = QueueNavigation.build(Array(list[range]), selected: position - range.lowerBound, make: make) else { return }
+        session.queueTitle = title
+        session.play(queue.items, at: queue.index, startAt: startAt)
+        isPlayerPresented = true
     }
 
     private func movieItem(_ movie: Movie) -> PlaybackItem? {
@@ -691,8 +762,8 @@ final class AppModel {
     private func liveItem(_ channel: Channel, loaded: LoadedCatalog) -> PlaybackItem? {
         let format = PlayerPreferences.liveFormat.resolve(allowed: account?.allowedFormats ?? [])
         guard let url = channel.directURL ?? loaded.client?.liveURL(streamID: channel.id, format: format) else { return nil }
-        let category = loaded.catalog.liveCategories.first { $0.id == channel.categoryID }?.name
-        return PlaybackItem(id: channel.id, kind: .live, title: channel.name, subtitle: category,
+        return PlaybackItem(id: channel.id, kind: .live, title: channel.name,
+                            subtitle: channel.categoryID.flatMap { loaded.categoryName($0, in: .live) },
                             url: url, artwork: channel.logo, streamID: channel.id)
     }
 

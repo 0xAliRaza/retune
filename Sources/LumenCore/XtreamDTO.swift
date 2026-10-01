@@ -115,7 +115,10 @@ struct XtreamInfoDTO: Decodable {
             director: c.lenientText(.director),
             genre: c.lenientText(.genre),
             releaseDate: c.lenientText(.releasedate) ?? c.lenientText(.releaseDate) ?? c.lenientText(.release_date),
-            durationSeconds: c.lenientInt(.duration_secs) ?? runtimeMinutes.map { $0 * 60 },
+            durationSeconds: c.lenientInt(.duration_secs) ?? runtimeMinutes.flatMap { minutes in
+                let (seconds, overflow) = minutes.multipliedReportingOverflow(by: 60)
+                return overflow ? nil : seconds
+            },
             rating: XtreamRating.tenPoint(rating: c.lenientDouble(.rating), fiveBased: c.lenientDouble(.rating_5based)),
             poster: c.lenientURL(.movie_image) ?? c.lenientURL(.cover_big) ?? c.lenientURL(.cover),
             backdrop: c.lenientFirstURL(.backdrop_path),

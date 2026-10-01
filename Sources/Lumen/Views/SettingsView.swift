@@ -56,12 +56,13 @@ private struct PrivacySettings: View {
 
             Section("Hidden categories") {
                 let hidden = LibrarySection.allCases.flatMap { section in
-                    model.hiddenCategories(for: section).map { (section, $0) }
+                    model.hiddenCategories(for: section).map { HiddenCategory(section: section, category: $0) }
                 }
                 if hidden.isEmpty {
                     Text("Right-click a category and choose Hide to tidy up the list.").foregroundStyle(.secondary)
                 } else {
-                    ForEach(hidden, id: \.1.id) { section, category in
+                    ForEach(hidden) { row in
+                        let section = row.section, category = row.category
                         HStack {
                             Image(systemName: section.symbol).foregroundStyle(.secondary).frame(width: 18)
                             Text(category.name.trimmingCharacters(in: .whitespaces))
@@ -101,4 +102,12 @@ private struct PrivacySettings: View {
         .sheet(item: Binding(get: { model.pinRequest.flatMap { $0.fromSettings ? $0 : nil } },
                              set: { model.pinRequest = $0 })) { PINSheet(request: $0) }
     }
+}
+
+/// Live, VOD and series category ids overlap, so a hidden row's identity includes its section.
+private struct HiddenCategory: Identifiable {
+    let section: LibrarySection
+    let category: MediaCategory
+
+    var id: String { "\(section.rawValue)/\(category.id)" }
 }

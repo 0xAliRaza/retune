@@ -108,15 +108,41 @@ public struct BrowseIndex<Item: Browsable>: Sendable where Item: Sendable {
     }
 }
 
-/// Limits a play queue to a window around the chosen item, so starting playback from a
-/// 65k-title "All" view doesn't build tens of thousands of stream URLs.
-public enum QueueWindow {
-    public static let defaultSize = 500
 
-    /// The range of `count` items to queue, centred on `index` and shifted to stay in bounds.
-    public static func range(count: Int, around index: Int, size: Int = defaultSize) -> Range<Int> {
-        guard count > size else { return 0..<count }
-        let start = min(max(index - size / 2, 0), count - size)
-        return start..<(start + size)
+/// Arrow-key movement through a wrapping grid laid out row by row.
+public enum GridNavigation {
+    public enum Direction: Sendable { case up, down, left, right }
+
+    /// Number of adaptive columns that fit, mirroring SwiftUI's `GridItem(.adaptive(minimum:))`.
+    public static func columns(width: Double, minimum: Double, spacing: Double) -> Int {
+        guard minimum > 0 else { return 1 }
+        return max(1, Int((width + spacing) / (minimum + spacing)))
+    }
+
+    /// Whether moving `direction` from `index` would leave the grid (top row going up, first column going left).
+    public static func isAtEdge(_ index: Int, _ direction: Direction, columns: Int) -> Bool {
+        let columns = max(columns, 1)
+        switch direction {
+        case .up: return index < columns
+        case .left: return index % columns == 0
+        case .down, .right: return false
+        }
+    }
+
+    /// The index after moving, clamped to the list; nil when there's nothing to move to.
+    public static func move(from index: Int?, _ direction: Direction, columns: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let index else { return 0 }
+        let step: Int
+        switch direction {
+        case .left: step = -1
+        case .right: step = 1
+        case .up: step = -max(columns, 1)
+        case .down: step = max(columns, 1)
+        }
+        let target = index + step
+        if target < 0 { return direction == .up ? index : 0 }
+        if target >= count { return direction == .down ? (index / max(columns, 1) == (count - 1) / max(columns, 1) ? index : count - 1) : count - 1 }
+        return target
     }
 }

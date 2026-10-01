@@ -5,7 +5,8 @@ import AppKit
 /// Only claims horizontal gestures while `canGoBack` is true, so normal scrolling is untouched.
 @MainActor
 final class SwipeBackMonitor {
-    private var monitor: Any?
+    /// Touched from `deinit`, which is nonisolated; only ever mutated on the main thread.
+    nonisolated(unsafe) private var monitor: Any?
     private let canGoBack: () -> Bool
     private let onBack: () -> Void
 
@@ -31,6 +32,10 @@ final class SwipeBackMonitor {
         }
     }
 
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+    }
+
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
@@ -39,6 +44,10 @@ final class SwipeBackMonitor {
     private func trackTwoFingerSwipe(_ event: NSEvent) -> Bool {
         guard NSEvent.isSwipeTrackingFromScrollEventsEnabled, event.phase == .began,
               abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) else { return false }
+        // Only claim the "back" direction (fingers moving right); forward swipes pass through untouched.
+        // scrollingDeltaX follows the content, so its sign flips with the Natural Scrolling setting.
+        let fingersMovingRight = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX > 0 : event.scrollingDeltaX < 0
+        guard fingersMovingRight else { return false }
         var triggered = false
         event.trackSwipeEvent(options: [.lockDirection, .clampGestureAmount],
                               dampenAmountThresholdMin: -1, max: 1) { [weak self] amount, _, isComplete, _ in

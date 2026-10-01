@@ -10,6 +10,9 @@ struct PlayerScreen: View {
     @State private var window: NSWindow?
     @State private var keyMonitor: Any?
     @State private var swipeMonitor: SwipeBackMonitor?
+    /// Set by the list panel while its search field has focus.
+    @State private var isTypingInDrawer = false
+    @State private var showSubtitlePanel = false
     @State private var flash: String?
     @State private var showStats = false
     @State private var stats = PlaybackStats()
@@ -34,13 +37,13 @@ struct PlayerScreen: View {
                 VStack(spacing: 0) {
                     PlayerTopBar(onClose: close, showQueue: $showQueue)
                     Spacer()
-                    PlayerBottomBar(onFullScreen: toggleFullScreen, showStats: $showStats, stats: stats)
+                    PlayerBottomBar(onFullScreen: toggleFullScreen, showStats: $showStats, showSubtitlePanel: $showSubtitlePanel, stats: stats)
                 }
                 .transition(.opacity)
             }
 
             if showQueue, session.queue.count > 1 {
-                HStack { Spacer(); QueueDrawer(onPick: { showQueue = false }) }
+                HStack { Spacer(); QueueDrawer(isSearching: $isTypingInDrawer, onPick: { showQueue = false }) }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
@@ -72,6 +75,8 @@ struct PlayerScreen: View {
         }
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
         .animation(.easeInOut(duration: 0.25), value: showQueue)
+        .onChange(of: showQueue) { if !showQueue { isTypingInDrawer = false } }
+        .onChange(of: window) { window?.makeFirstResponder(nil) }
         .animation(.easeInOut(duration: 0.2), value: flash)
         .animation(.easeInOut(duration: 0.2), value: showStats)
         .animation(.easeInOut(duration: 0.3), value: engine.hasVideoFrame)
@@ -82,6 +87,8 @@ struct PlayerScreen: View {
             if !Task.isCancelled { showBufferingSpinner = true }
         }
         .onAppear {
+            // A browse text field (category filter, search) may still hold focus under the overlay.
+            window?.makeFirstResponder(nil)
             installKeyMonitor()
             pokeControls()
             let monitor = SwipeBackMonitor(canGoBack: { true }, onBack: { close() })
@@ -120,7 +127,7 @@ struct PlayerScreen: View {
             .padding(28)
             .glassPanel(cornerRadius: 20)
         } else if !engine.hasVideoFrame, let item = session.current {
-            TuningCard(item: item)
+            TuningCard(item: item, reconnectAttempt: session.reconnectAttempt)
                 .transition(.opacity)
         } else if showBufferingSpinner {
             ProgressView().controlSize(.large).tint(.white)
@@ -138,7 +145,7 @@ struct PlayerScreen: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled, !engine.isPaused, !showQueue else { return }
+            guard !Task.isCancelled, !engine.isPaused, !showQueue, !showSubtitlePanel else { return }
             controlsVisible = false
             NSCursor.setHiddenUntilMouseMoves(true)
         }
@@ -167,17 +174,21 @@ struct PlayerScreen: View {
         let session = session
         withAnimation(.easeInOut(duration: 0.28)) {
             model.isPlayerPresented = false
-        } completion: {
+        } completion: { [model] in
+            // Something new may have started during the fade; only stop if the player stayed closed.
+            guard !model.isPlayerPresented else { return }
             session.stop()
             if exitFullScreen { window?.toggleFullScreen(nil) }
+            // Hand keyboard focus back to the tile/row that was played.
+            model.focus(.content)
         }
     }
 
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.window === window, !event.modifierFlags.contains(.command) else { return event }
-            // Typing into a field (e.g. the list panel's search) must not trigger player shortcuts.
-            if event.window?.firstResponder is NSTextView, event.keyCode != 53 { return event }
+            // Typing into the list panel's search must not trigger player shortcuts.
+            if isTypingInDrawer, event.keyCode != 53 { return event }
             return handleKey(event) ? nil : event
         }
     }
@@ -208,11 +219,22 @@ struct PlayerScreen: View {
         }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f": toggleFullScreen(); return true
-        case "m": engine.setMuted(!engine.isMuted); showFlash(engine.isMuted ? "Sound On" : "Muted"); return true
+        case "m":
+            let mute = !engine.isMuted
+            engine.setMuted(mute)
+            showFlash(mute ? "Muted" : "Sound on")
+            return true
         case "l": if session.queue.count > 1 { showQueue.toggle() }; return true
         case "n": if event.modifierFlags.contains(.shift) { session.playPrevious() } else { session.playNext() }; return true
         case "s": engine.screenshot(); showFlash("Screenshot saved to Desktop"); return true
         case "i": showStats.toggle(); return true
+        case "c":
+            if let on = engine.toggleSubtitles() {
+                showFlash(on ? "Subtitles on" : "Subtitles off")
+            } else {
+                showFlash("No subtitles in this stream")
+            }
+            return true
         case "[": if !isLive { changeSpeed(by: -1) }; return true
         case "]": if !isLive { changeSpeed(by: 1) }; return true
         case "\\": if !isLive { engine.setSpeed(1); showFlash("Speed 1×") }; return true
@@ -300,6 +322,7 @@ private struct PlayerBottomBar: View {
     @Environment(AppModel.self) private var model
     let onFullScreen: () -> Void
     @Binding var showStats: Bool
+    @Binding var showSubtitlePanel: Bool
     let stats: PlaybackStats
 
     var body: some View {
@@ -311,17 +334,20 @@ private struct PlayerBottomBar: View {
             if !isLive, engine.isSeekable { Scrubber() }
             HStack(spacing: 6) {
                 // Same layout for live and on-demand: previous · (−10s) · play · (+10s) · next.
+                // Seek buttons exist for every on-demand item and only disable while loading, so the bar never shifts.
                 Button { session.playPrevious() } label: { Image(systemName: "backward.end.fill") }
                     .help("Previous (↑)").disabled(!session.hasPrevious && !isLive)
-                if engine.isSeekable {
-                    Button { engine.seek(by: -10) } label: { Image(systemName: "gobackward.10") }.help("Back 10 seconds (←)")
+                if !isLive {
+                    Button { engine.seek(by: -10) } label: { Image(systemName: "gobackward.10") }
+                        .help("Back 10 seconds (←)").disabled(!engine.isSeekable)
                 }
                 Button { engine.togglePause() } label: {
                     Image(systemName: engine.isPaused ? "play.fill" : "pause.fill").font(.title2).frame(width: 30)
                 }
                 .help(engine.isPaused ? "Play (Space)" : "Pause (Space)")
-                if engine.isSeekable {
-                    Button { engine.seek(by: 10) } label: { Image(systemName: "goforward.10") }.help("Forward 10 seconds (→)")
+                if !isLive {
+                    Button { engine.seek(by: 10) } label: { Image(systemName: "goforward.10") }
+                        .help("Forward 10 seconds (→)").disabled(!engine.isSeekable)
                 }
                 Button { session.playNext() } label: { Image(systemName: "forward.end.fill") }
                     .help("Next (↓)").disabled(!session.hasNext && !isLive)
@@ -333,7 +359,7 @@ private struct PlayerBottomBar: View {
                         .foregroundStyle(.white.opacity(0.5))
                         .padding(.trailing, 4)
                 }
-                TrackMenus()
+                TrackMenus(showSubtitlePanel: $showSubtitlePanel)
                 Button { showStats.toggle() } label: { Image(systemName: showStats ? "info.circle.fill" : "info.circle") }
                     .help("Stats for nerds (I)")
                 Button(action: onFullScreen) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("Full screen (F)")
@@ -426,6 +452,7 @@ private struct VolumeControl: View {
 
 private struct TrackMenus: View {
     @Environment(AppModel.self) private var model
+    @Binding var showSubtitlePanel: Bool
 
     var body: some View {
         let engine = model.session.engine
@@ -440,14 +467,12 @@ private struct TrackMenus: View {
                 .menuIndicator(.hidden).fixedSize().help("Audio track")
             }
             if !engine.subtitleTracks.isEmpty {
-                Menu {
-                    Toggle("Off", isOn: Binding(get: { !engine.subtitleTracks.contains(where: \.isSelected) }, set: { _ in engine.selectSubtitle(nil) }))
-                    Divider()
-                    ForEach(engine.subtitleTracks) { track in
-                        Toggle(track.displayName, isOn: Binding(get: { track.isSelected }, set: { _ in engine.selectSubtitle(track) }))
-                    }
-                } label: { Image(systemName: "captions.bubble") }
-                .menuIndicator(.hidden).fixedSize().help("Subtitles")
+                Button { showSubtitlePanel.toggle() } label: {
+                    Image(systemName: engine.subtitlesOn ? "captions.bubble.fill" : "captions.bubble")
+                }
+                .buttonStyle(PlayerIconButtonStyle())
+                .help("Subtitles (C turns them on/off)")
+                .popover(isPresented: $showSubtitlePanel, arrowEdge: .top) { SubtitlePanel() }
             }
             if !isLive {
                 Menu {
@@ -463,13 +488,74 @@ private struct TrackMenus: View {
     }
 }
 
+// MARK: - Subtitle panel
+
+/// Track choice plus the usual player adjustments; everything also has a keyboard shortcut.
+private struct SubtitlePanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let engine = model.session.engine
+        let style = engine.subtitleStyle
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Subtitles", selection: Binding(
+                get: { engine.subtitleTracks.first(where: \.isSelected)?.id ?? -1 },
+                set: { id in engine.selectSubtitle(engine.subtitleTracks.first { $0.id == id }) })) {
+                Text("Off").tag(-1)
+                ForEach(engine.subtitleTracks) { Text($0.displayName).tag($0.id) }
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+
+            Divider()
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Size")
+                    Slider(value: Binding(get: { style.scale }, set: { value in engine.updateSubtitleStyle { $0.scale = value } }),
+                           in: SubtitleStyle.scaleRange, step: 0.1)
+                    Text("\(Int(style.scale * 100))%").monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+                GridRow {
+                    Text("Position")
+                    // Inverted so dragging right moves subtitles up, matching the label.
+                    Slider(value: Binding(get: { 150 - style.position }, set: { value in engine.updateSubtitleStyle { $0.position = 150 - value } }),
+                           in: 50...100, step: 1)
+                    Text(style.position == 100 ? "Bottom" : "↑ \(Int(100 - style.position))").monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+                GridRow {
+                    Text("Delay")
+                    Stepper(value: Binding(get: { engine.subtitleDelay }, set: { engine.setSubtitleDelay($0) }), step: 0.1) {
+                        Text(String(format: "%+.1f s", engine.subtitleDelay)).monospacedDigit()
+                    }
+                    .gridCellColumns(2)
+                }
+            }
+
+            Toggle("Background box", isOn: Binding(get: { style.background }, set: { on in engine.updateSubtitleStyle { $0.background = on } }))
+            Toggle("Keep original styling", isOn: Binding(get: { style.keepsOriginalStyle }, set: { on in engine.updateSubtitleStyle { $0.keepsOriginalStyle = on } }))
+                .help("Use fonts and sizes embedded in styled (ASS) subtitles. Turn off if subtitles look huge or odd.")
+
+            HStack {
+                Text("C turns subtitles on/off").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset") { engine.resetSubtitles() }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+}
+
 // MARK: - Queue drawer
 
 /// Side panel listing the play queue: channels, a category's movies, or a series' episodes.
 private struct QueueDrawer: View {
     @Environment(AppModel.self) private var model
+    @Binding var isSearching: Bool
     let onPick: () -> Void
     @State private var query = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         let session = model.session
@@ -479,7 +565,10 @@ private struct QueueDrawer: View {
         }
         VStack(alignment: .leading, spacing: 10) {
             Text(session.queueTitle ?? session.current?.subtitle ?? "Up Next").font(.headline).foregroundStyle(.white).lineLimit(1)
-            TextField(session.current?.isLive == true ? "Find channel" : "Find", text: $query).textFieldStyle(.roundedBorder)
+            TextField(session.current?.isLive == true ? "Find channel" : "Find", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
+                .onChange(of: searchFocused) { isSearching = searchFocused }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -544,6 +633,12 @@ private struct QueueDrawer: View {
 /// cross-fading as the user zaps so the screen never flashes black.
 private struct TuningCard: View {
     let item: PlaybackItem
+    var reconnectAttempt = 0
+
+    private var status: String {
+        if reconnectAttempt > 0 { return "Reconnecting… (\(reconnectAttempt)/\(ReconnectPolicy.maxAttempts))" }
+        return item.isLive ? "Tuning…" : "Loading…"
+    }
 
     var body: some View {
         ZStack {
@@ -558,7 +653,7 @@ private struct TuningCard: View {
                 }
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).tint(.white)
-                    Text(item.isLive ? "Tuning…" : "Loading…").font(.callout).foregroundStyle(.white.opacity(0.7))
+                    Text(status).font(.callout).foregroundStyle(.white.opacity(0.7)).contentTransition(.numericText())
                 }
             }
             .foregroundStyle(.white)

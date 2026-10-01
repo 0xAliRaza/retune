@@ -329,3 +329,333 @@ struct QueueWindowTests {
         #expect(QueueWindow.range(count: 1000, around: 990, size: 100) == 900..<1000)
     }
 }
+
+struct QueueNavigationTests {
+    private func item(_ id: String, kind: ContentKind, parent: String? = nil) -> PlaybackItem {
+        PlaybackItem(id: id, kind: kind, title: id, url: URL(string: "http://h/\(id)")!, parentID: parent)
+    }
+
+    @Test func liveWrapsOnDemandStops() {
+        #expect(QueueNavigation.target(from: 0, delta: -1, count: 5, wraps: true) == 4)
+        #expect(QueueNavigation.target(from: 4, delta: 1, count: 5, wraps: true) == 0)
+        #expect(QueueNavigation.target(from: 0, delta: -1, count: 5, wraps: false) == nil)
+        #expect(QueueNavigation.target(from: 4, delta: 1, count: 5, wraps: false) == nil)
+        #expect(QueueNavigation.target(from: 2, delta: 1, count: 5, wraps: false) == 3)
+        #expect(QueueNavigation.target(from: 0, delta: 1, count: 0, wraps: true) == nil)
+    }
+
+    @Test func autoplayOnlyWithinSameSeries() {
+        let a1 = item("a1", kind: .episode, parent: "A"), a2 = item("a2", kind: .episode, parent: "A")
+        let b1 = item("b1", kind: .episode, parent: "B"), movie = item("m", kind: .movie)
+        #expect(QueueNavigation.shouldAutoplay(after: a1, next: a2, enabled: true))
+        #expect(!QueueNavigation.shouldAutoplay(after: a1, next: a2, enabled: false))
+        #expect(!QueueNavigation.shouldAutoplay(after: a1, next: b1, enabled: true))
+        #expect(!QueueNavigation.shouldAutoplay(after: movie, next: item("m2", kind: .movie), enabled: true))
+        #expect(!QueueNavigation.shouldAutoplay(after: a1, next: nil, enabled: true))
+        #expect(!QueueNavigation.shouldAutoplay(after: item("x", kind: .episode), next: item("y", kind: .episode), enabled: true))
+    }
+
+    @Test func buildKeepsSelectionAlignedWhenItemsAreSkipped() throws {
+        let source = ["a", "skip", "b", "c"]
+        let make = { (id: String) in id == "skip" ? nil : self.item(id, kind: .movie) }
+        let built = try #require(QueueNavigation.build(source, selected: 2, make: make))
+        #expect(built.items.map(\.id) == ["a", "b", "c"])
+        #expect(built.items[built.index].id == "b")
+        #expect(QueueNavigation.build(source, selected: 1, make: make) == nil)
+    }
+}
+
+struct SubtitleStyleTests {
+    @Test func defaultsForceReadableStyle() {
+        let options = Dictionary(uniqueKeysWithValues: SubtitleStyle().mpvOptions)
+        #expect(options["sub-ass-override"] == "strip")
+        #expect(options["sub-border-style"] == "outline-and-shadow")
+        #expect(options["sub-scale"] == "1.0")
+        #expect(options["sub-pos"] == "100.0")
+    }
+
+    @Test func keepingOriginalStyleAndBackgroundMapToMpv() {
+        var style = SubtitleStyle()
+        style.keepsOriginalStyle = true
+        style.background = true
+        let options = Dictionary(uniqueKeysWithValues: style.mpvOptions)
+        #expect(options["sub-ass-override"] == "scale")
+        #expect(options["sub-border-style"] == "background-box")
+    }
+
+    @Test func clampRoundsAndBounds() {
+        var style = SubtitleStyle()
+        style.scale = 9
+        style.position = 10
+        style.clamp()
+        #expect(style.scale == SubtitleStyle.scaleRange.upperBound)
+        #expect(style.position == SubtitleStyle.positionRange.lowerBound)
+        style.scale = 1.24
+        style.position = 87.6
+        style.clamp()
+        #expect(style.scale == 1.2)
+        #expect(style.position == 88)
+    }
+}
+
+struct EpisodePickerTests {
+    private func progress(_ position: Double, at time: TimeInterval) -> WatchProgress {
+        WatchProgress(item: PlaybackItem(id: "e", kind: .episode, title: "e", url: URL(string: "http://h/e")!),
+                      position: position, duration: 2400, updatedAt: Date(timeIntervalSince1970: time))
+    }
+
+    @Test func startsAtFirstWhenNothingWatched() {
+        #expect(EpisodePicker.pick(count: 5) { _ in nil } == .start(0))
+        #expect(EpisodePicker.pick(count: 0) { _ in nil } == nil)
+    }
+
+    @Test func resumesInProgressEpisode() {
+        let saved = [2: progress(600, at: 10)]
+        #expect(EpisodePicker.pick(count: 5) { saved[$0] } == .resume(2))
+    }
+
+    @Test func offersNextAfterFinishedEpisode() {
+        let saved = [0: progress(2400, at: 1), 1: progress(2400, at: 2)]
+        #expect(EpisodePicker.pick(count: 5) { saved[$0] } == .next(2))
+    }
+
+    @Test func latestActivityWins() {
+        // Finished E4 after abandoning E2 part-way: go on to E5, not back to E2.
+        let saved = [1: progress(600, at: 1), 3: progress(2400, at: 5)]
+        #expect(EpisodePicker.pick(count: 6) { saved[$0] } == .next(4))
+        // Started E2 again after finishing E4: resume E2.
+        let rewatch = [1: progress(600, at: 9), 3: progress(2400, at: 5)]
+        #expect(EpisodePicker.pick(count: 6) { rewatch[$0] } == .resume(1))
+    }
+
+    @Test func finishedSeriesStartsOver() {
+        let saved = [2: progress(2400, at: 3)]
+        #expect(EpisodePicker.pick(count: 3) { saved[$0] } == .start(0))
+    }
+
+    @Test func barelyStartedEpisodeIsIgnored() {
+        let saved = [3: progress(10, at: 9)]
+        #expect(EpisodePicker.pick(count: 5) { saved[$0] } == .start(0))
+    }
+}
+
+struct GridNavigationTests {
+    @Test func columnsMatchAdaptiveLayout() {
+        #expect(GridNavigation.columns(width: 1000, minimum: 150, spacing: 20) == 6)
+        #expect(GridNavigation.columns(width: 999, minimum: 150, spacing: 20) == 5)
+        #expect(GridNavigation.columns(width: 100, minimum: 150, spacing: 20) == 1)
+    }
+
+    @Test func movesWithinGrid() {
+        // 4 columns, 10 items: rows [0-3] [4-7] [8-9]
+        #expect(GridNavigation.move(from: nil, .down, columns: 4, count: 10) == 0)
+        #expect(GridNavigation.move(from: 5, .right, columns: 4, count: 10) == 6)
+        #expect(GridNavigation.move(from: 5, .left, columns: 4, count: 10) == 4)
+        #expect(GridNavigation.move(from: 5, .up, columns: 4, count: 10) == 1)
+        #expect(GridNavigation.move(from: 1, .up, columns: 4, count: 10) == 1)
+        #expect(GridNavigation.move(from: 5, .down, columns: 4, count: 10) == 9)
+        #expect(GridNavigation.move(from: 4, .down, columns: 4, count: 10) == 8)
+        #expect(GridNavigation.move(from: 9, .down, columns: 4, count: 10) == 9)
+        #expect(GridNavigation.move(from: 0, .left, columns: 4, count: 10) == 0)
+        #expect(GridNavigation.move(from: 9, .right, columns: 4, count: 10) == 9)
+        #expect(GridNavigation.move(from: 0, .down, columns: 4, count: 0) == nil)
+    }
+}
+
+struct ReviewHardeningTests {
+    @Test func lenientIntRejectsNonFiniteAndHugeValues() throws {
+        let json = #"[{"num":"nan","name":"A","stream_id":1},{"num":1e300,"name":"B","stream_id":2},{"num":"inf","name":"C","stream_id":3}]"#
+        let channels = try JSONDecoder().decode([Failable<XtreamLiveDTO>].self, from: Data(json.utf8)).compactMap(\.value?.channel)
+        #expect(channels.count == 3)
+        #expect(channels.allSatisfy { $0.number == nil })
+    }
+
+    @Test func runtimeOverflowDoesNotTrap() throws {
+        let json = #"{"info":{"episode_run_time":"9223372036854775807"},"seasons":[],"episodes":{}}"#
+        let detail = try JSONDecoder().decode(XtreamSeriesInfoResponse.self, from: Data(json.utf8)).detail
+        #expect(detail.info.durationSeconds == nil)
+    }
+
+    @Test func slashInCredentialsIsEscapedInStreamURLs() {
+        let client = XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example:8080")!, username: "u/1", password: "a/b"))
+        #expect(client.liveURL(streamID: "7").absoluteString == "http://h.example:8080/live/u%2F1/a%2Fb/7.ts")
+    }
+
+    @Test func locatorsStripCredentialsAndResolveBack() throws {
+        let client = XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example:8080")!, username: "u", password: "secret"))
+        let movie = Movie(id: "9", name: "M", poster: nil, categoryID: nil, rating: nil, added: nil, containerExtension: "mkv", directURL: nil)
+        let real = client.movieURL(movie)
+        let locator = try #require(XtreamClient.locator(for: real))
+        #expect(locator.absoluteString == "lumen://movie/9.mkv")
+        #expect(!locator.absoluteString.contains("secret"))
+        #expect(client.resolve(locator) == real)
+        let other = URL(string: "https://cdn.example/file.mp4")!
+        #expect(XtreamClient.locator(for: other) == nil)
+        #expect(client.resolve(other) == other)
+    }
+
+    @Test func sanitizeRewritesStoredStreamURLs() {
+        var state = LibraryState()
+        let url = URL(string: "http://h.example:8080/series/u/secret/42.mkv")!
+        state.recordProgress(key: "k", item: PlaybackItem(id: "42", kind: .episode, title: "E", url: url), position: 100, duration: 1000)
+        let firstPass = state.sanitizeStreamURLs()
+        let secondPass = state.sanitizeStreamURLs()
+        #expect(firstPass)
+        #expect(state.progress["k"]?.item.url.absoluteString == "lumen://series/42.mkv")
+        #expect(!secondPass)
+    }
+
+    @Test func pruningKeepsWatchedMarksOverInProgress() {
+        var state = LibraryState()
+        let item = PlaybackItem(id: "x", kind: .movie, title: "x", url: URL(string: "http://h/x")!)
+        state.markWatched(key: "watched-old", item: item, duration: 100)
+        for index in 0..<LibraryState.progressLimit {
+            state.recordProgress(key: "p\(index)", item: item, position: 50, duration: 100,
+                                 at: Date(timeIntervalSince1970: TimeInterval(index + 10)))
+        }
+        #expect(state.progress.count == LibraryState.progressLimit)
+        #expect(state.progress["watched-old"] != nil)
+        #expect(state.progress["p0"] == nil)
+    }
+
+    @Test func libraryDecodingSkipsOneBadProgressEntry() throws {
+        let json = """
+        {"favorites":[],"recentChannels":[],"progress":{
+          "good":{"item":{"id":"1","kind":"movie","title":"A","url":"http://h/1"},"position":10,"duration":100,"updatedAt":0},
+          "bad":{"item":{"id":"2","kind":"hologram","title":"B","url":"http://h/2"},"position":10,"duration":100,"updatedAt":0}}}
+        """
+        let state = try JSONDecoder().decode(LibraryState.self, from: Data(json.utf8))
+        #expect(state.progress.keys.sorted() == ["good"])
+    }
+
+    @Test func corruptStoreIsBackedUpNotOverwritten() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("library.json")
+        try Data("{not json".utf8).write(to: url)
+        let store = JSONFileStore<[String: String]>(url: url)
+        #expect(store.load() == nil)
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(files.contains { $0.hasPrefix("library.json.corrupt-") })
+        try Data("{}".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        try store.save(["a": "b"])
+        #expect(store.load() == ["a": "b"])
+        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(permissions == 0o600)
+    }
+
+    @Test func m3uDuplicateURLsAreDropped() {
+        let text = """
+        #EXTM3U
+        #EXTINF:-1 group-title="A",One
+        http://h/1.ts
+        #EXTINF:-1 group-title="A",One again
+        http://h/1.ts
+        """
+        #expect(M3UParser.catalog(from: M3UParser.parse(text)).channels.map(\.name) == ["One"])
+    }
+}
+
+/// Serves canned responses so XtreamClient's retry rules can be tested without a network.
+final class StubProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var responses: [(Int, Data)] = []
+    nonisolated(unsafe) static var requests = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let (status, body) = Self.responses.isEmpty ? (200, Data()) : Self.responses.removeFirst()
+        Self.requests += 1
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+@Suite(.serialized)
+struct XtreamRetryTests {
+    private func client() -> XtreamClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        return XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "p"),
+                            session: URLSession(configuration: configuration))
+    }
+
+    @Test func emptyBodyIsRetriedThenSucceeds() async throws {
+        StubProtocol.requests = 0
+        StubProtocol.responses = [(200, Data()), (222, Data()), (200, Data(#"[{"category_id":"1","category_name":"News"}]"#.utf8))]
+        let categories = try await client().categories(.live)
+        #expect(categories.map(\.name) == ["News"])
+        #expect(StubProtocol.requests == 3)
+    }
+
+    @Test func persistentEmptyBodyIsAnErrorNotAnEmptySection() async {
+        StubProtocol.responses = [(200, Data()), (200, Data()), (200, Data())]
+        await #expect(throws: LumenError.emptyResponse) { try await client().movies() }
+    }
+
+    @Test func emptyArrayIsAGenuinelyEmptySection() async throws {
+        StubProtocol.responses = [(200, Data("[]".utf8))]
+        #expect(try await client().series().isEmpty)
+    }
+}
+
+struct PaneNavigationTests {
+    private func action(_ key: PaneNavigation.Key, _ pane: PaneNavigation.Pane, grid: Bool = false, detail: Bool = false) -> PaneNavigation.Action {
+        PaneNavigation.action(for: key, in: pane, contentHandlesHorizontal: grid, showingDetail: detail)
+    }
+
+    @Test func movesForwardThroughColumns() {
+        #expect(action(.tab, .sidebar) == .focus(.categories))
+        #expect(action(.right, .sidebar) == .focus(.categories))
+        #expect(action(.enter, .sidebar) == .focus(.categories))
+        #expect(action(.tab, .categories) == .focus(.content))
+        #expect(action(.enter, .categories) == .focus(.content))
+        #expect(action(.tab, .content) == .focus(.sidebar))
+    }
+
+    @Test func movesBackThroughColumns() {
+        #expect(action(.left, .categories) == .focus(.sidebar))
+        #expect(action(.escape, .categories) == .focus(.sidebar))
+        #expect(action(.backTab, .content) == .focus(.categories))
+        #expect(action(.escape, .content) == .focus(.categories))
+        #expect(action(.left, .content) == .focus(.categories))
+    }
+
+    @Test func contentKeepsItsOwnKeys() {
+        #expect(action(.left, .content, grid: true) == .passThrough)
+        #expect(action(.enter, .content) == .passThrough)
+        #expect(action(.right, .content) == .passThrough)
+    }
+
+    @Test func detailPageEscapeGoesBack() {
+        #expect(action(.escape, .content, detail: true) == .goBack)
+        #expect(action(.left, .content, detail: true) == .passThrough)
+    }
+}
+
+struct GridEdgeTests {
+    @Test func detectsTopRowAndFirstColumn() {
+        #expect(GridNavigation.isAtEdge(2, .up, columns: 4))
+        #expect(!GridNavigation.isAtEdge(5, .up, columns: 4))
+        #expect(GridNavigation.isAtEdge(4, .left, columns: 4))
+        #expect(!GridNavigation.isAtEdge(5, .left, columns: 4))
+        #expect(!GridNavigation.isAtEdge(0, .down, columns: 4))
+    }
+}
+
+struct ReconnectPolicyTests {
+    @Test func backsOffThenGivesUp() {
+        #expect(ReconnectPolicy.delay(afterFailedAttempts: 0) == .seconds(1))
+        #expect(ReconnectPolicy.delay(afterFailedAttempts: 3) == .seconds(6))
+        #expect(ReconnectPolicy.delay(afterFailedAttempts: ReconnectPolicy.maxAttempts) == nil)
+        let total = ReconnectPolicy.delays.reduce(Duration.zero, +)
+        #expect(total >= .seconds(10))
+    }
+}

@@ -78,6 +78,10 @@ final class MPVPlayer {
     private(set) var speed: Double = 1
     private(set) var tracks: [MediaTrack] = []
     private(set) var videoSize: CGSize?
+    private(set) var subtitleStyle = SubtitleStyle.load()
+    /// Per-file subtitle timing offset in seconds; resets whenever a new file loads.
+    private(set) var subtitleDelay: Double = 0
+    @ObservationIgnored private var lastSubtitleTrackID: Int?
 
     var audioTracks: [MediaTrack] { tracks.filter { $0.kind == .audio } }
     var subtitleTracks: [MediaTrack] { tracks.filter { $0.kind == .sub } }
@@ -86,6 +90,12 @@ final class MPVPlayer {
     var hasNoAudio: Bool { isLoaded && audioTracks.isEmpty && tracks.contains { $0.kind == .video } }
 
     @ObservationIgnored var onEndOfFile: (() -> Void)?
+    /// Fires when playback leaves the end of a file again (replay, seek back).
+    @ObservationIgnored var onLeftEnd: (() -> Void)?
+    /// A load or stream failed. When set, the owner decides whether to retry or call `showError`.
+    @ObservationIgnored var onError: ((String) -> Void)?
+    /// The first frame of a file (or after a seek) is on screen.
+    @ObservationIgnored var onPlaybackStarted: (() -> Void)?
     @ObservationIgnored private(set) var handle: OpaquePointer?
 
     private static let volumeDefaultsKey = "player.volume"
@@ -117,11 +127,11 @@ final class MPVPlayer {
             ("sub-auto", "fuzzy"),
             ("slang", Self.preferredLanguages),
             ("alang", Self.preferredLanguages),
-            ("sub-font-size", "44"),
+            ("sub-font-size", "40"),
             ("sub-border-size", "2.5"),
             ("screenshot-directory", "~/Desktop"),
         ]
-        for (name, value) in options { mpv_set_option_string(handle, name, value) }
+        for (name, value) in options + subtitleStyle.mpvOptions { mpv_set_option_string(handle, name, value) }
         volume = storedVolume
 
         guard mpv_initialize(handle) >= 0 else {
@@ -140,6 +150,8 @@ final class MPVPlayer {
         observe("mute", MPV_FORMAT_FLAG)
         observe("speed", MPV_FORMAT_DOUBLE)
         observe("track-list", MPV_FORMAT_NONE)
+        observe("sid", MPV_FORMAT_NONE)
+        observe("aid", MPV_FORMAT_NONE)
         observe("video-params/w", MPV_FORMAT_INT64)
         observe("video-params/h", MPV_FORMAT_INT64)
 
@@ -168,6 +180,7 @@ final class MPVPlayer {
         bufferedAhead = 0
         tracks = []
         videoSize = nil
+        setSubtitleDelay(0)
         setProperty("start", startAt.map { String(format: "%.0f", $0) } ?? "none")
         command("loadfile", url.absoluteString, "replace")
         setProperty("pause", "no")
@@ -189,6 +202,11 @@ final class MPVPlayer {
         stop()
         errorMessage = nil
         isBuffering = true
+    }
+
+    func showError(_ message: String) {
+        errorMessage = message
+        isBuffering = false
     }
 
     func togglePause() { setPaused(!isPaused) }
@@ -222,6 +240,40 @@ final class MPVPlayer {
     func selectSubtitle(_ track: MediaTrack?) { setProperty("sid", track.map { String($0.id) } ?? "no") }
 
     func screenshot() { command("screenshot") }
+
+    // MARK: Subtitles
+
+    var subtitlesOn: Bool { subtitleTracks.contains(where: \.isSelected) }
+
+    /// Turns subtitles off, or back on with the last used (else first) track. Returns the new state, or nil if there are none.
+    @discardableResult
+    func toggleSubtitles() -> Bool? {
+        if let selected = subtitleTracks.first(where: \.isSelected) {
+            lastSubtitleTrackID = selected.id
+            selectSubtitle(nil)
+            return false
+        }
+        guard let track = subtitleTracks.first(where: { $0.id == lastSubtitleTrackID }) ?? subtitleTracks.first else { return nil }
+        selectSubtitle(track)
+        return true
+    }
+
+    func setSubtitleDelay(_ seconds: Double) {
+        subtitleDelay = (seconds * 10).rounded() / 10
+        setProperty("sub-delay", String(subtitleDelay))
+    }
+
+    func updateSubtitleStyle(_ change: (inout SubtitleStyle) -> Void) {
+        change(&subtitleStyle)
+        subtitleStyle.clamp()
+        subtitleStyle.save()
+        for (name, value) in subtitleStyle.mpvOptions { setProperty(name, value) }
+    }
+
+    func resetSubtitles() {
+        updateSubtitleStyle { $0 = SubtitleStyle() }
+        setSubtitleDelay(0)
+    }
 
     /// Frees mpv; must run after the render context has been released.
     func shutdown() {
@@ -307,6 +359,7 @@ final class MPVPlayer {
             case MPV_EVENT_PLAYBACK_RESTART:
                 hasVideoFrame = true
                 isBuffering = false
+                onPlaybackStarted?()
             case MPV_EVENT_FILE_LOADED:
                 isLoaded = true
                 isBuffering = false
@@ -324,7 +377,8 @@ final class MPVPlayer {
         guard end.reason == MPV_END_FILE_REASON_ERROR else { return }
         isLoaded = false
         let reason = String(cString: mpv_error_string(end.error))
-        errorMessage = "This stream couldn't be played (\(reason)). The channel may be offline or your connection limit reached."
+        let message = "This stream couldn't be played (\(reason)). The channel may be offline or your connection limit reached."
+        if let onError { onError(message) } else { showError(message) }
     }
 
     private func handlePropertyChange(_ property: mpv_event_property) {
@@ -343,11 +397,17 @@ final class MPVPlayer {
         case "volume": volume = double()
         case "mute": isMuted = flag()
         case "speed": speed = double()
-        case "track-list": refreshTracks()
+        case "track-list", "sid", "aid": refreshTracks()
         case "video-params/w", "video-params/h": updateVideoSize(name: name, value: int())
         case "eof-reached":
             let ended = flag()
-            if ended, !reachedEnd { reachedEnd = true; onEndOfFile?() } else if !ended { reachedEnd = false }
+            if ended, !reachedEnd {
+                reachedEnd = true
+                onEndOfFile?()
+            } else if !ended, reachedEnd {
+                reachedEnd = false
+                onLeftEnd?()
+            }
         default: break
         }
     }

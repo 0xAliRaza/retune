@@ -58,6 +58,16 @@ final class MPVVideoLayer: CAOpenGLLayer {
         return context
     }
 
+    /// Core Animation may drop the GL context (display/GPU change); the mpv render context must go first,
+    /// freed while that context is still valid and current.
+    override func releaseCGLContext(_ context: CGLContextObj) {
+        if context == glContext {
+            releaseRenderContext()
+            glContext = nil
+        }
+        super.releaseCGLContext(context)
+    }
+
     override func canDraw(inCGLContext context: CGLContextObj, pixelFormat: CGLPixelFormatObj,
                           forLayerTime t: CFTimeInterval, displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
         true
@@ -76,14 +86,20 @@ final class MPVVideoLayer: CAOpenGLLayer {
 
         var fbo = mpv_opengl_fbo(fbo: Int32(framebuffer), w: Int32(viewport[2]), h: Int32(viewport[3]), internal_format: 0)
         var flipY: Int32 = 1
+        // Rendering happens on the main thread; the default (1) would block it up to ~50 ms per frame
+        // waiting for the frame's display time, starving the UI and key handling.
+        var blockForTargetTime: Int32 = 0
         withUnsafeMutablePointer(to: &fbo) { fboPointer in
             withUnsafeMutablePointer(to: &flipY) { flipPointer in
-                var params = [
-                    mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: UnsafeMutableRawPointer(fboPointer)),
-                    mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: UnsafeMutableRawPointer(flipPointer)),
-                    mpv_render_param(),
-                ]
-                mpv_render_context_render(renderContext, &params)
+                withUnsafeMutablePointer(to: &blockForTargetTime) { blockPointer in
+                    var params = [
+                        mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: UnsafeMutableRawPointer(fboPointer)),
+                        mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: UnsafeMutableRawPointer(flipPointer)),
+                        mpv_render_param(type: MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, data: UnsafeMutableRawPointer(blockPointer)),
+                        mpv_render_param(),
+                    ]
+                    mpv_render_context_render(renderContext, &params)
+                }
             }
         }
         glFlush()

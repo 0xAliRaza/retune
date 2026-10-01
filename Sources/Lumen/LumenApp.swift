@@ -68,7 +68,15 @@ struct LumenCommands: Commands {
             ForEach(Array(LibrarySection.allCases.enumerated()), id: \.element) { offset, section in
                 Button(section.title) { model.section = section }
                     .keyboardShortcut(KeyEquivalent(Character(String(offset + 1))))
+                    .disabled(section == .series && model.activePlaylist?.supportsSeries == false)
             }
+            Divider()
+            Button("Back") { model.goBack() }
+                .keyboardShortcut("[")
+                .disabled(model.detailPath.isEmpty || model.isPlayerPresented)
+            Button("Search") { model.searchFocusRequests += 1 }
+                .keyboardShortcut("f")
+                .disabled(model.isPlayerPresented)
             Divider()
             Button("Lock Categories Again") { model.relockAll() }
                 .keyboardShortcut("l")
