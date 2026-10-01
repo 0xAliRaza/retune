@@ -1,0 +1,97 @@
+import AppKit
+import ImageIO
+import SwiftUI
+
+/// Downloads, downsamples and caches artwork. Posters arrive as full-size TMDB images; decoding them
+/// at display size keeps memory flat while scrolling through tens of thousands of titles.
+actor ImagePipeline {
+    static let shared = ImagePipeline()
+
+    private let memory = NSCache<NSString, NSImage>()
+    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+    private var failed: Set<URL> = []
+    private let session: URLSession
+
+    init() {
+        memory.countLimit = 600
+        let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Lumen/Artwork", isDirectory: true)
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 1 << 30, directory: cacheDirectory)
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.timeoutIntervalForRequest = 20
+        configuration.httpMaximumConnectionsPerHost = 6
+        session = URLSession(configuration: configuration)
+    }
+
+    func image(for url: URL, maxPixelSize: CGFloat) async -> NSImage? {
+        let key = "\(url.absoluteString)#\(Int(maxPixelSize))" as NSString
+        if let cached = memory.object(forKey: key) { return cached }
+        if failed.contains(url) { return nil }
+        if let task = inFlight[key as String] { return await task.value }
+
+        let session = session
+        let task = Task<NSImage?, Never>.detached(priority: .utility) {
+            guard let (data, response) = try? await session.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode ?? 200 == 200 else { return nil }
+            return Self.downsample(data, maxPixelSize: maxPixelSize)
+        }
+        inFlight[key as String] = task
+        let image = await task.value
+        inFlight[key as String] = nil
+        if let image { memory.setObject(image, forKey: key) } else { failed.insert(url) }
+        return image
+    }
+
+    func clear() {
+        memory.removeAllObjects()
+        failed = []
+        session.configuration.urlCache?.removeAllCachedResponses()
+    }
+
+    private static func downsample(_ data: Data, maxPixelSize: CGFloat) -> NSImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ] as CFDictionary
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+}
+
+/// Async artwork with a graceful placeholder.
+struct RemoteImage<Placeholder: View>: View {
+    let url: URL?
+    var maxPixelSize: CGFloat = 400
+    var contentMode: ContentMode = .fill
+    @ViewBuilder var placeholder: () -> Placeholder
+
+    @State private var image: NSImage?
+    @State private var loadedURL: URL?
+
+    var body: some View {
+        ZStack {
+            if let image, loadedURL == url {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: contentMode)
+                    .transition(.opacity)
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: url) {
+            guard let url else { image = nil; return }
+            let result = await ImagePipeline.shared.image(for: url, maxPixelSize: maxPixelSize)
+            withAnimation(.easeOut(duration: 0.2)) {
+                image = result
+                loadedURL = url
+            }
+        }
+    }
+}

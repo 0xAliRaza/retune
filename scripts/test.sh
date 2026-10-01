@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Runs the test suite. With only Command Line Tools installed, swift-testing lives outside the default search paths.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+CLT=/Library/Developer/CommandLineTools/Library/Developer
+if [[ -d "$CLT/Frameworks/Testing.framework" ]] && ! xcode-select -p | grep -q Xcode.app; then
+  swift test -Xswiftc -F"$CLT/Frameworks" -Xlinker -F"$CLT/Frameworks" \
+    -Xlinker -rpath -Xlinker "$CLT/Frameworks" -Xlinker -rpath -Xlinker "$CLT/usr/lib" "$@"
+else
+  swift test "$@"
+fi
