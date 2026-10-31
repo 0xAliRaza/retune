@@ -68,7 +68,8 @@ Series and the Now and Next guide need an Xtream Codes login, because M3U playli
 2. Open it and drag **Retune** to **Applications**.
 3. Open Retune. macOS will block it the first time, because the app isn't notarized by Apple yet.
 4. Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
-5. After you add a playlist, macOS will [ask for your Mac password](#why-does-macos-ask-for-my-mac-password). That's expected. Type it and click **Always Allow**.
+
+After a future update, macOS may [ask for your Mac password](#why-does-macos-ask-for-my-mac-password). That's expected. Type it and click **Always Allow**.
 
 Each download needs **Apple Silicon** and the macOS version listed on its release, because the bundled libraries are built for that system. If your Mac doesn't match, [run it locally](#run-it-locally) instead.
 
@@ -123,7 +124,7 @@ This compiles a release build and puts `Retune.app` in `/Applications`. Open it 
 To build without installing, leave off `--install`, and the app lands in `build/Retune.app`.
 
 > [!NOTE]
-> **Expect a password popup.** After you add a playlist, macOS will ask for your Mac password so Retune can use your Keychain. This is normal, and it'll come back after each rebuild. [Here's why](#why-does-macos-ask-for-my-mac-password).
+> **Expect a password popup after rebuilding.** Your first build won't ask, but macOS treats each rebuild as a new app, so it asks for your Mac password before handing over your saved login. This is normal. [Here's why](#why-does-macos-ask-for-my-mac-password).
 
 ### Running it for development
 
@@ -177,7 +178,7 @@ This produces a self-contained app and DMG in `build/`.
 3. Wait for the first catalog download. After that, Retune opens instantly and refreshes in the background.
 
 > [!NOTE]
-> **Don't be alarmed by the password popup.** macOS will say Retune wants to use confidential information in your Keychain, and ask for your login keychain password. That's your normal Mac password. Type it and click **Always Allow**. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
+> **Don't be alarmed by a password popup.** You won't see one on a fresh install, but after an update macOS may say Retune wants to use confidential information in your Keychain, and ask for your login keychain password. That's your normal Mac password. Type it and click **Always Allow**. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
 
 ## Your questions about security and privacy
 
@@ -191,13 +192,13 @@ M3U links are different. A provider's M3U link often has your password inside it
 
 ### Why does macOS ask for my Mac password?
 
-Because your provider password is locked in the Keychain, and macOS is checking that you're happy for Retune to read it. The popup comes from macOS itself:
+Because your provider password is locked in the Keychain, and macOS is checking that you're happy for this version of Retune to read it. A fresh install doesn't ask, because an app can read back what it saved itself. You'll see it after an update, and it comes from macOS itself:
 
 - **Retune never sees your Mac password.** You're typing into a macOS system dialog, and the app only gets a yes or no.
 - **"Login keychain password" just means your Mac password,** unless you've deliberately changed it.
 - **Always Allow** stops the popup until Retune next changes. **Allow** works for this one time. **Deny** is safe too, but Retune won't be able to log in until you allow it or enter your provider password again.
 
-It returns after an update because macOS ties that permission to the app's exact signature, and each build without a paid Apple signature looks like a new app. Apps signed through the Apple Developer Program don't have this problem.
+The Keychain is what well-built Mac apps use to store passwords. You rarely see this popup from them because they're signed with a paid Apple Developer ID, which gives every version the same identity. Retune doesn't have one yet, so macOS ties the permission to the exact build, and each update looks like a new app.
 
 Only ever type your Mac password into this kind of system dialog. If something inside the Retune window itself asks for it, don't enter it, and please [report it](SECURITY.md).
 
