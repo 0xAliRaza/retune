@@ -8,6 +8,15 @@ public enum StreamProfile: Sendable {
         self = isLive ? .live : .onDemand
     }
 
+    /// Speed to reset to on load, because mpv keeps it across files. Live video can't run ahead of the
+    /// broadcast, while on-demand files keep the speed the viewer chose.
+    public var forcedSpeed: Double? {
+        switch self {
+        case .live: 1
+        case .onDemand: nil
+        }
+    }
+
     /// Applied before every load, because mpv keeps them across files.
     ///
     /// Live streams must not reconnect inside FFmpeg. A reconnect there splices the new connection into

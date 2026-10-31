@@ -5,6 +5,19 @@
 ### Fixed
 
 - The `S` shortcut saves a screenshot with hardware-decoded video. It used to fail silently while reporting success, and it now shows an error if the file can't be written.
+- On-demand video that loses its connection now reconnects and resumes. It used to look like the end of the file, which saved it as stopped and could start the next episode.
+- Live channels always play at normal speed, even after watching something faster.
+- Deleting a playlist that isn't open no longer interrupts a refresh of the one that is.
+- Saving changes to the open playlist now replaces a refresh that was still using the old details.
+- A playlist whose saved password is missing now says so, instead of showing a cached list that can't play.
+- Switching or deleting a playlist now stops playback, so its final position can't land in the wrong place.
+- The packaging script no longer stops on a library with no search paths.
+
+### Security
+
+- A stream address that can't be reduced to a credential-free reference is no longer written to watch history.
+- A catalog save still running in the background can't bring back a deleted playlist's cache.
+- A very long line in an M3U playlist can no longer hang the app.
 
 ## 1.0.0 - 2026-10-31
 

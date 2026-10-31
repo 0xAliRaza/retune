@@ -53,13 +53,41 @@ public enum M3UParser {
         return (title.trimmingCharacters(in: .whitespaces), parseAttributes(header))
     }
 
+    /// Reads `key="value"` pairs. This is a single pass over the bytes because playlists come from
+    /// strangers: a regex retries from every position, so one long line could hang the app.
     static func parseAttributes(_ header: String) -> [String: String] {
+        let bytes = Array(header.utf8)
         var result: [String: String] = [:]
-        let pattern = /([A-Za-z0-9_-]+)="([^"]*)"/
-        for match in header.matches(of: pattern) {
-            result[String(match.output.1).lowercased()] = String(match.output.2)
+        var keyStart: Int?
+        var index = 0
+        while index < bytes.count {
+            if isKeyByte(bytes[index]) {
+                keyStart = keyStart ?? index
+                index += 1
+                continue
+            }
+            if let start = keyStart, bytes[index] == UInt8(ascii: "="), index + 1 < bytes.count,
+               bytes[index + 1] == UInt8(ascii: "\"") {
+                // No closing quote means no attribute can follow either.
+                guard let close = bytes[(index + 2)...].firstIndex(of: UInt8(ascii: "\"")) else { break }
+                let key = String(decoding: bytes[start..<index], as: UTF8.self).lowercased()
+                result[key] = String(decoding: bytes[(index + 2)..<close], as: UTF8.self)
+                index = close
+            }
+            keyStart = nil
+            index += 1
         }
         return result
+    }
+
+    private static func isKeyByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"),
+             UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "_"), UInt8(ascii: "-"):
+            true
+        default:
+            false
+        }
     }
 
     /// Splits entries into live / movie buckets. Xtream-generated playlists put VOD under `/movie/`

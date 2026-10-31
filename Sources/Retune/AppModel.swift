@@ -173,6 +173,10 @@ final class AppModel {
     private(set) var library = LibraryState()
 
     var activePlaylistID: UUID? {
+        willSet {
+            // Runs before the switch, because the final position belongs to the playlist it came from.
+            if newValue != activePlaylistID { stopPlayback() }
+        }
         didSet {
             guard activePlaylistID != oldValue else { return }
             UserDefaults.standard.set(activePlaylistID?.uuidString, forKey: "activePlaylist")
@@ -244,6 +248,7 @@ final class AppModel {
     @ObservationIgnored private var librarySaveTask: Task<Void, Never>?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var refreshTask: (generation: Int, task: Task<Void, Never>)?
+    @ObservationIgnored private var catalogWrites = SerialWork()
     /// When each item's progress was last written to the observed library (see `recordProgress`).
     @ObservationIgnored private var lastProgressCommit: [String: Date] = [:]
 
@@ -280,7 +285,11 @@ final class AppModel {
         if let index = playlists.firstIndex(where: { $0.id == playlist.id }) {
             playlists[index] = playlist
             savePlaylists()
-            if activePlaylistID == playlist.id { Task { await refresh() } }
+            if activePlaylistID == playlist.id {
+                // A refresh still using the old details must not replace what this one downloads.
+                loadGeneration += 1
+                Task { await refresh() }
+            }
         } else {
             playlists.append(playlist)
             savePlaylists()
@@ -289,15 +298,21 @@ final class AppModel {
     }
 
     func deletePlaylist(_ playlist: Playlist) {
-        // Invalidates any refresh in flight, which would otherwise re-save the deleted catalog.
-        loadGeneration += 1
+        let isActive = activePlaylistID == playlist.id
+        if isActive {
+            // Before the library is cleared, or the player's final save would bring its entries back.
+            stopPlayback()
+            // Invalidates any refresh in flight, which would otherwise re-save the deleted catalog.
+            loadGeneration += 1
+        }
         playlists.removeAll { $0.id == playlist.id }
         savePlaylists()
         secrets.remove(playlist.id.uuidString)
-        JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id)).delete()
+        let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
+        catalogWrites.enqueue { cacheStore.delete() }
         library.removeAll(playlist: playlist.id)
         scheduleLibrarySave()
-        if activePlaylistID == playlist.id {
+        if isActive {
             loaded = nil
             activePlaylistID = playlists.first?.id
         }
@@ -328,6 +343,11 @@ final class AppModel {
         if section == .series, !playlist.supportsSeries { section = .live }
 
         let client = credentials(for: playlist).map { XtreamClient(credentials: $0) }
+        // Without the password nothing in the cached catalog can play, so don't show it as if it could.
+        if case .xtream = playlist.source, client == nil {
+            status = .failed(RetuneError.missingPassword.localizedDescription)
+            return
+        }
         let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
         status = .loading("Opening \(playlist.name)…")
         // Fast parallel decode; the plain store load handles (and backs up) a corrupt file.
@@ -389,7 +409,7 @@ final class AppModel {
             }
             guard generation == loadGeneration else { return }
             let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
-            Task.detached(priority: .utility) { try? cacheStore.save(catalog) }
+            catalogWrites.enqueue { try? cacheStore.save(catalog) }
             let built = await LoadedCatalog.build(playlist: playlist, catalog: catalog, client: client)
             guard generation == loadGeneration else { return }
             loaded = built
@@ -577,7 +597,7 @@ final class AppModel {
 
     func setWatched(movie: Movie, _ watched: Bool) {
         if watched {
-            guard let item = movieItem(movie).map(storable) else { return }
+            guard let item = movieItem(movie).flatMap(storable) else { return }
             library.markWatched(key: key(.movie, movie.id), item: item, duration: progress(.movie, movie.id)?.duration)
         } else {
             library.markUnwatched(key: key(.movie, movie.id))
@@ -587,8 +607,8 @@ final class AppModel {
 
     func setWatched(episode: Episode, of series: Series, _ watched: Bool) {
         if watched {
-            guard let client = loaded?.client else { return }
-            let item = storable(episodeItem(episode, of: series, client: client))
+            guard let client = loaded?.client,
+                  let item = storable(episodeItem(episode, of: series, client: client)) else { return }
             library.markWatched(key: key(.episode, episode.id), item: item,
                                 duration: episode.durationSeconds.map(Double.init) ?? progress(.episode, episode.id)?.duration)
         } else {
@@ -703,15 +723,21 @@ final class AppModel {
             let key = key(item.kind, item.id)
             if !isFinal, let last = lastProgressCommit[key], Date().timeIntervalSince(last) < 30 { return }
             lastProgressCommit[key] = Date()
-            library.recordProgress(key: key, item: storable(item), position: position, duration: duration)
+            guard let stored = storable(item) else { return }
+            library.recordProgress(key: key, item: stored, position: position, duration: duration)
         }
         scheduleLibrarySave()
     }
 
-    /// Strips credentials from stream URLs before they're persisted.
-    private func storable(_ item: PlaybackItem) -> PlaybackItem {
-        let locator = loaded?.client == nil ? XtreamClient.opaqueLocator(id: item.id) : XtreamClient.locator(for: item.url)
-        return locator.map(item.with(url:)) ?? item
+    /// Strips credentials from stream URLs before they're persisted, or returns nil if that isn't possible.
+    private func storable(_ item: PlaybackItem) -> PlaybackItem? {
+        guard let loaded else { return nil }
+        return item.credentialFree(hasAccount: loaded.client != nil)
+    }
+
+    private func stopPlayback() {
+        isPlayerPresented = false
+        session.stop()
     }
 
     /// Turns a stored (credential-free) item back into a playable one for the current account.

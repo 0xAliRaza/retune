@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import RetuneCore
 
@@ -864,5 +865,136 @@ struct PINHashTests {
     @Test func flippingSurvivesEmptyInput() {
         #expect(ScreenshotFile.flippedRows([], bytesPerRow: 4).isEmpty)
         #expect(ScreenshotFile.flippedRows([1, 2], bytesPerRow: 0).isEmpty)
+    }
+}
+
+@Suite struct CredentialFreeItemTests {
+    private func item(_ url: String, id: String = "42") -> PlaybackItem {
+        PlaybackItem(id: id, kind: .movie, title: "Film", url: URL(string: url)!)
+    }
+
+    @Test func xtreamItemsKeepOnlyALocator() throws {
+        let stored = try #require(item("http://host/movie/user/secret/42.mp4").credentialFree(hasAccount: true))
+        #expect(stored.url.absoluteString == "retune://movie/42.mp4")
+    }
+
+    @Test func playlistEntriesKeepOnlyTheirID() throws {
+        let stored = try #require(item("http://host/get?user=me&password=secret").credentialFree(hasAccount: false))
+        #expect(stored.url.absoluteString == "retune://item/42")
+    }
+
+    /// An address the locator can't parse must not reach history, because it may hold the password.
+    @Test func unrecognizedAccountURLsAreNeverStored() {
+        #expect(item("http://host/get.php?username=me&password=secret").credentialFree(hasAccount: true) == nil)
+    }
+
+    @Test func storedItemsStayAsTheyAre() throws {
+        let stored = try #require(item("retune://movie/42.mp4").credentialFree(hasAccount: true))
+        #expect(stored.url.absoluteString == "retune://movie/42.mp4")
+    }
+}
+
+@Suite struct EarlyEndTests {
+    @Test(arguments: [
+        (position: 600.0, duration: 3600.0, previous: Double?.none, expected: true),
+        (position: 3539.0, duration: 3600.0, previous: nil, expected: true),
+        (position: 3540.0, duration: 3600.0, previous: nil, expected: false),
+        (position: 3599.0, duration: 3600.0, previous: nil, expected: false),
+        (position: 600.0, duration: 0.0, previous: nil, expected: false),
+        (position: 600.0, duration: 3600.0, previous: 600.0, expected: false),
+        (position: 605.0, duration: 3600.0, previous: 600.0, expected: false),
+        (position: 606.0, duration: 3600.0, previous: 600.0, expected: true),
+        (position: 590.0, duration: 3600.0, previous: 600.0, expected: false),
+    ])
+    func decision(position: Double, duration: Double, previous: Double?, expected: Bool) {
+        #expect(ReconnectPolicy.endedEarly(position: position, duration: duration, previousEarlyEnd: previous) == expected)
+    }
+
+    /// A file truly cut short stops at the same spot, so retries have to come to an end.
+    @Test func aTruncatedFileIsRetriedOnce() {
+        var previous: Double?
+        var retries = 0
+        while ReconnectPolicy.endedEarly(position: 600, duration: 3600, previousEarlyEnd: previous), retries < 10 {
+            previous = 600
+            retries += 1
+        }
+        #expect(retries == 1)
+    }
+}
+
+@Suite struct ForcedSpeedTests {
+    @Test func liveAlwaysRunsAtNormalSpeed() {
+        #expect(StreamProfile.live.forcedSpeed == 1)
+    }
+
+    @Test func onDemandKeepsTheChosenSpeed() {
+        #expect(StreamProfile.onDemand.forcedSpeed == nil)
+    }
+}
+
+@Suite struct AttributeScannerTests {
+    /// The regex the scanner replaced, kept here as the definition of correct behavior.
+    private func regexResult(_ header: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for match in header.matches(of: /([A-Za-z0-9_-]+)="([^"]*)"/) {
+            result[String(match.output.1).lowercased()] = String(match.output.2)
+        }
+        return result
+    }
+
+    @Test(arguments: [
+        #"#EXTINF:-1 tvg-id="a" TVG-Logo="http://x/y.png" group-title="News, Sport",Name"#,
+        #"key="""#,
+        #"a="b" a="c""#,
+        #"a="b c="d""#,
+        #"a="unclosed"#,
+        #"="no key""#,
+        #"a=b c="d""#,
+        #"a = "spaced" b="ok""#,
+        #"x-y_z9="v"tail="w""#,
+        #"a="é ü 日本語" b="😀""#,
+        "",
+    ])
+    func matchesTheRegex(header: String) {
+        #expect(M3UParser.parseAttributes(header) == regexResult(header))
+    }
+
+    @Test func matchesTheRegexOnGeneratedInput() {
+        let alphabet = Array(#"ab-_9="" ,:"#)
+        var state: UInt64 = 0x1234_5678
+        for _ in 0..<5_000 {
+            var header = ""
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            for _ in 0..<(state >> 59) {
+                state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                header.append(alphabet[Int((state >> 33) % UInt64(alphabet.count))])
+            }
+            #expect(M3UParser.parseAttributes(header) == regexResult(header), "\(header)")
+        }
+    }
+
+    /// Long enough that a parser retrying from every position would take minutes.
+    @Test func aHugeLineParsesQuickly() {
+        let header = String(repeating: "a", count: 500_000)
+        let elapsed = ContinuousClock().measure { _ = M3UParser.parseAttributes(header) }
+        #expect(elapsed < .seconds(2))
+    }
+}
+
+@Suite struct SerialWorkTests {
+    @Test func aDeleteWaitsForTheSaveBeforeIt() async {
+        let order = OSAllocatedUnfairLock(initialState: [String]())
+        var work = SerialWork()
+        work.enqueue {
+            Thread.sleep(forTimeInterval: 0.1)
+            order.withLock { $0.append("save") }
+        }
+        work.enqueue { order.withLock { $0.append("delete") } }
+        await work.finished()
+        #expect(order.withLock { $0 } == ["save", "delete"])
+    }
+
+    @Test func finishedReturnsWithNothingEnqueued() async {
+        await SerialWork().finished()
     }
 }

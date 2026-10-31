@@ -41,7 +41,7 @@ dedupe_rpaths "$APP/Contents/MacOS/Retune"
 for lib in "$FRAMEWORKS"/*.dylib; do dedupe_rpaths "$lib"; done
 
 dupes=$(for file in "$APP/Contents/MacOS/Retune" "$FRAMEWORKS"/*.dylib; do
-  otool -l "$file" | grep -A2 LC_RPATH | awk '/ path /{print $2}' | sort | uniq -d | sed "s|^|$file: |"
+  otool -l "$file" | { grep -A2 LC_RPATH || true; } | awk '/ path /{print $2}' | sort | uniq -d | sed "s|^|$file: |"
 done)
 if [[ -n "$dupes" ]]; then
   echo "error: duplicate rpaths remain:" >&2; echo "$dupes" >&2; exit 1

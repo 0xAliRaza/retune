@@ -206,7 +206,7 @@ Only ever type your Mac password into this kind of system dialog. If something i
 
 **That depends on your provider, and often it isn't.** The Xtream Codes system puts your username and password directly in web addresses, and most providers only offer plain HTTP. On plain HTTP, anyone on the network path, such as a shared Wi-Fi network, could read your login and see what you're watching.
 
-Retune can't fix that, but it won't hide it. It warns you when you enter a plain HTTP address, and it uses HTTPS whenever your provider supports it. A VPN you trust protects the part between you and the VPN.
+Retune can't fix that, but it won't hide it. It warns you when you enter a plain HTTP address. It doesn't test whether your provider offers HTTPS, and an address with no `https://` in front is treated as plain HTTP, so type it in full if your provider supports it. A VPN you trust protects the part between you and the VPN.
 
 <img src="docs/screenshots/plain-http-warning.png" width="420" alt="The playlist form warning that an address uses plain HTTP">
 
@@ -230,7 +230,7 @@ No software can promise perfection. Video decoders are complex, and Retune doesn
 
 ### What's stored on my Mac?
 
-Everything is in `~/Library/Application Support/Retune`, private to your macOS user:
+Your data is in `~/Library/Application Support/Retune`, private to your macOS user:
 
 | File | Contents |
 | --- | --- |
@@ -238,11 +238,13 @@ Everything is in `~/Library/Application Support/Retune`, private to your macOS u
 | `Catalogs/` | Cached channel, movie and series lists |
 | `library.json` | Favorites, watch progress and hidden categories |
 
-Watch history stores anonymous references rather than stream addresses, so your password doesn't end up there. These files aren't encrypted, so they're included in unencrypted backups.
+Watch history stores anonymous references rather than stream addresses, so your password doesn't end up there. An M3U link is different: it often has your password inside it, and Retune keeps that link in `playlists.json` and its stream addresses in `Catalogs/`. These files aren't encrypted, so they're included in unencrypted backups.
+
+Posters and channel logos are cached separately in `~/Library/Caches/Retune/Artwork`.
 
 ### Is the app safe to open if it's not notarized?
 
-Notarization means Apple scanned a build. It doesn't mean a security review. Still, I understand if you'd rather be careful. You can check the DMG's published checksum, or better, [build it yourself](#run-it-locally).
+Notarization means Apple scanned a build. It doesn't mean a security review. Still, I understand if you'd rather be careful. You can compare the DMG with the SHA-256 checksum on its release page, or better, [build it yourself](#run-it-locally).
 
 ### How strong is the parental PIN?
 

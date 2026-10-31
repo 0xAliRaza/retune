@@ -200,6 +200,7 @@ final class MPVPlayer {
         videoSize = nil
         setSubtitleDelay(0)
         for (name, value) in profile.mpvProperties { setProperty(name, value) }
+        if let speed = profile.forcedSpeed { setSpeed(speed) }
         setProperty("start", startAt.map { String(format: "%.0f", $0) } ?? "none")
         command("loadfile", url.absoluteString, "replace")
         setProperty("pause", "no")

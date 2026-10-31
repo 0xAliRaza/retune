@@ -15,6 +15,8 @@ final class PlaybackSession {
     private(set) var epg: [EPGEntry] = []
     /// Automatic reconnects used for the current item (0 = first try); shown on the tuning card.
     private(set) var reconnectAttempt = 0
+    /// Where the current file last stopped short of its length, so a retry has to get further.
+    @ObservationIgnored private var earlyEndPosition: Double?
 
     /// Seconds left before the next episode starts automatically; nil when no countdown is running.
     private(set) var autoplayCountdown: Int?
@@ -152,6 +154,7 @@ final class PlaybackSession {
     private func start(at position: Int, startAt: Double?, debounce: Bool = false) {
         cancelAutoplay()
         reconnectAttempt = 0
+        earlyEndPosition = nil
         if position != index, current != nil { previousIndex = index }
         index = position
         let item = queue[position]
@@ -199,6 +202,14 @@ final class PlaybackSession {
         // A live stream "ending" means the feed dropped; reconnect instead of sitting on the last frame.
         if current.isLive {
             handleFailure("The live stream stopped.")
+            return
+        }
+        // FFmpeg reports a connection it gave up on as a normal ending, which would otherwise count as
+        // finishing the file and start the next episode.
+        if ReconnectPolicy.endedEarly(position: engine.position, duration: engine.duration,
+                                      previousEarlyEnd: earlyEndPosition) {
+            earlyEndPosition = engine.position
+            handleFailure("The connection dropped.")
             return
         }
         saveProgress()

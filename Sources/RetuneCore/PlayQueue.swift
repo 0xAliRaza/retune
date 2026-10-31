@@ -81,4 +81,17 @@ public enum ReconnectPolicy {
     }
 
     public static var maxAttempts: Int { delays.count }
+
+    /// Whether a file that ended this far from its length should be treated as a dropped connection.
+    public static let earlyEndMargin: Double = 60
+    /// Playback gained since the previous early end that makes another retry worthwhile.
+    public static let earlyEndProgress: Double = 5
+
+    /// FFmpeg reports a connection it gave up on as a normal end of file. A file that is really cut short
+    /// stops at the same spot every time, so a retry has to get further or the end is accepted as real.
+    public static func endedEarly(position: Double, duration: Double, previousEarlyEnd: Double?) -> Bool {
+        guard duration > 0, duration - position > earlyEndMargin else { return false }
+        guard let previousEarlyEnd else { return true }
+        return position > previousEarlyEnd + earlyEndProgress
+    }
 }

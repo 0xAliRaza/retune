@@ -111,6 +111,14 @@ public struct PlaybackItem: Identifiable, Hashable, Codable, Sendable {
         PlaybackItem(id: id, kind: kind, title: title, subtitle: subtitle, url: newURL,
                      artwork: artwork, streamID: streamID, parentID: parentID)
     }
+
+    /// This item in the form that may be written to disk, or nil if its URL can't be stored safely.
+    /// Stream URLs carry credentials, so there's deliberately no fallback to the original URL.
+    public func credentialFree(hasAccount: Bool) -> PlaybackItem? {
+        guard url.scheme != XtreamClient.locatorScheme else { return self }
+        let locator = hasAccount ? XtreamClient.locator(for: url) : XtreamClient.opaqueLocator(id: id)
+        return locator.map(with(url:))
+    }
 }
 
 /// Stable keys used for favorites and watch progress, scoped per playlist.
