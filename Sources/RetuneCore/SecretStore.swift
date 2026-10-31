@@ -8,7 +8,7 @@ import Security
 public struct SecretStore: Sendable {
     private let service: String
 
-    public init(service: String = "app.lumen.player.playlist") {
+    public init(service: String = "io.github.0xaliraza.retune.playlist") {
         self.service = service
     }
 
@@ -25,12 +25,12 @@ public struct SecretStore: Sendable {
         let data = Data(secret.utf8)
         let update = SecItemUpdate(baseQuery(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if update == errSecSuccess { return }
-        guard update == errSecItemNotFound else { throw LumenError.keychain(update) }
+        guard update == errSecItemNotFound else { throw RetuneError.keychain(update) }
         var attributes = baseQuery(account)
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
         let add = SecItemAdd(attributes as CFDictionary, nil)
-        guard add == errSecSuccess else { throw LumenError.keychain(add) }
+        guard add == errSecSuccess else { throw RetuneError.keychain(add) }
     }
 
     public func remove(_ account: String) {

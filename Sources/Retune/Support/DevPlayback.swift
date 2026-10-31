@@ -1,16 +1,16 @@
 import Foundation
-import LumenCore
+import RetuneCore
 import OSLog
 
 #if DEBUG
-/// Developer hook: `Lumen --play <URL> [--live]` opens the player on that stream and logs playback
+/// Developer hook: `Retune --play <URL> [--live]` opens the player on that stream and logs playback
 /// health, so rendering changes can be verified without clicking through the UI:
-///   log show --last 1m --predicate 'subsystem == "app.lumen" AND category == "dev"'
+///   log show --last 1m --predicate 'subsystem == "io.github.0xaliraza.retune" AND category == "dev"'
 @MainActor
 enum DevPlayback {
-    private static let log = Logger(subsystem: "app.lumen", category: "dev")
+    private static let log = Logger(subsystem: "io.github.0xaliraza.retune", category: "dev")
 
-    /// `Lumen --bench`: switches library sections and logs how long the main thread stays busy after each.
+    /// `Retune --bench`: switches library sections and logs how long the main thread stays busy after each.
     static func benchIfRequested(_ model: AppModel) {
         guard CommandLine.arguments.contains("--bench") else { return }
         Task {

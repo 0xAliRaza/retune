@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 
 @main
-struct LumenApp: App {
+struct RetuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
 
     var body: some Scene {
-        Window("Lumen", id: "main") {
+        Window("Retune", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: 980, minHeight: 620)
@@ -15,11 +15,12 @@ struct LumenApp: App {
                     appDelegate.model = model
                     #if DEBUG
                     DevPlayback.startIfRequested(model)
+                    DevProbe.startIfRequested(model)
                     #endif
                 }
         }
         .defaultSize(width: 1360, height: 860)
-        .commands { LumenCommands(model: model) }
+        .commands { RetuneCommands(model: model) }
 
         Settings {
             SettingsView().environment(model)
@@ -47,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-struct LumenCommands: Commands {
+struct RetuneCommands: Commands {
     let model: AppModel
 
     var body: some Commands {

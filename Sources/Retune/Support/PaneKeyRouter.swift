@@ -1,12 +1,12 @@
 import AppKit
-import LumenCore
+import RetuneCore
 import OSLog
 
 /// Moves keyboard focus between the sidebar, category list and content (rules in `PaneNavigation`),
 /// plus in and out of the two text fields. Lists and grids still handle their own ↑ ↓ and Return.
 @MainActor
 final class PaneKeyRouter {
-    private static let log = Logger(subsystem: "app.lumen", category: "keyboard")
+    private static let log = Logger(subsystem: "io.github.0xaliraza.retune", category: "keyboard")
 
     private let model: AppModel
     /// Removed from `deinit`, which is nonisolated; only mutated on the main thread.

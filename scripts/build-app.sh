@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Builds a release Lumen.app into ./build. Requires: Swift toolchain, `brew install mpv`.
+# Builds a release Retune.app into ./build. Requires: Swift toolchain, `brew install mpv`.
 # Pass --install to also copy it into /Applications (so Spotlight/Raycast can find it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 swift build -c release
-BIN="$(swift build -c release --show-bin-path)/Lumen"
-APP="build/Lumen.app"
+BIN="$(swift build -c release --show-bin-path)/Retune"
+APP="build/Retune.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Lumen"
+cp "$BIN" "$APP/Contents/MacOS/Retune"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 
@@ -25,9 +25,9 @@ codesign --force --sign - "$APP"
 echo "Built $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-  pkill -x Lumen 2>/dev/null || true
-  rm -rf /Applications/Lumen.app
-  ditto "$APP" /Applications/Lumen.app
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Lumen.app
-  echo "Installed /Applications/Lumen.app"
+  pkill -x Retune 2>/dev/null || true
+  rm -rf /Applications/Retune.app
+  ditto "$APP" /Applications/Retune.app
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Retune.app
+  echo "Installed /Applications/Retune.app"
 fi

@@ -1,4 +1,4 @@
-import LumenCore
+import RetuneCore
 import SwiftUI
 
 struct FavoriteButton: View {

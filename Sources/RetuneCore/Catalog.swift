@@ -69,20 +69,20 @@ public enum CatalogLoader {
                        channels: lists.0, movies: lists.1, series: lists.2)
     }
 
-    public static func fetchM3U(_ url: URL, session: URLSession = .lumenAPI) async throws -> Catalog {
+    public static func fetchM3U(_ url: URL, session: URLSession = .retuneAPI) async throws -> Catalog {
         let data: Data
         if url.isFileURL {
             data = try Data(contentsOf: url)
         } else {
             let (body, response) = try await session.boundedData(from: url, limit: URLSession.apiResponseLimit)
-            if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { throw LumenError.http(status) }
+            if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { throw RetuneError.http(status) }
             data = body
         }
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw LumenError.unreadableResponse
+            throw RetuneError.unreadableResponse
         }
         let catalog = M3UParser.catalog(from: M3UParser.parse(text))
-        guard !catalog.isEmpty else { throw LumenError.emptyPlaylist }
+        guard !catalog.isEmpty else { throw RetuneError.emptyPlaylist }
         return catalog
     }
 }
@@ -131,7 +131,7 @@ public struct JSONFileStore<Value: Codable>: Sendable {
 public enum AppPaths {
     public static let support: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Lumen", isDirectory: true)
+        return base.appendingPathComponent("Retune", isDirectory: true)
     }()
 
     public static var playlists: URL { support.appendingPathComponent("playlists.json") }

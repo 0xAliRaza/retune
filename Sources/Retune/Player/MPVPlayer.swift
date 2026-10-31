@@ -1,6 +1,6 @@
 import CMPV
 import Foundation
-import LumenCore
+import RetuneCore
 import Observation
 
 struct MediaTrack: Identifiable, Hashable {
@@ -131,7 +131,7 @@ final class MPVPlayer {
             // Start streams sooner: FFmpeg otherwise inspects up to ~5 s of a live stream before playing.
             // 2 s found the audio (AAC and E-AC-3) on every provider TS channel probed; 3 s leaves margin.
             ("demuxer-lavf-analyzeduration", "3"),
-            ("user-agent", "Lumen/1.0 (Macintosh; libmpv)"),
+            ("user-agent", "Retune/1.0 (Macintosh; libmpv)"),
             // Subtitles and languages: follow the system language first.
             ("sub-auto", "fuzzy"),
             ("slang", Self.preferredLanguages),
@@ -142,6 +142,10 @@ final class MPVPlayer {
         ]
         for (name, value) in options + subtitleStyle.mpvOptions { mpv_set_option_string(handle, name, value) }
         volume = storedVolume
+        #if DEBUG
+        // DevProbe runs unattended, so it must never reach the speakers.
+        if CommandLine.arguments.contains("--probe") { mpv_set_option_string(handle, "ao", "null") }
+        #endif
 
         guard mpv_initialize(handle) >= 0 else {
             errorMessage = "The video engine failed to start."
@@ -182,7 +186,7 @@ final class MPVPlayer {
         // Catalogs cached by older builds skipped today's parser checks, so this is the real gate.
         guard StreamURLPolicy.isAllowed(url) else {
             stop()
-            showError("This stream uses an address type Lumen doesn't play.")
+            showError("This stream uses an address type Retune doesn't play.")
             return
         }
         hasVideoFrame = false
@@ -300,6 +304,10 @@ final class MPVPlayer {
     }
 
     /// Reads current stats synchronously; cheap enough to poll once a second while the overlay is open.
+    #if DEBUG
+    var audioOutput: String? { string("current-ao") }
+    #endif
+
     func readStats() -> PlaybackStats {
         var stats = PlaybackStats()
         stats.width = int("video-params/w") ?? 0

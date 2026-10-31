@@ -1,6 +1,6 @@
 import Foundation
 
-public enum LumenError: LocalizedError, Equatable, Sendable {
+public enum RetuneError: LocalizedError, Equatable, Sendable {
     case invalidServer
     case invalidCredentials
     case accountInactive(String)
@@ -19,7 +19,7 @@ public enum LumenError: LocalizedError, Equatable, Sendable {
         case .accountInactive(let status): "This account is \(status.lowercased())."
         case .http(let code): "The server responded with an error (HTTP \(code))."
         case .emptyResponse: "The server returned an empty response. It may be rate limiting — try again in a moment."
-        case .unreadableResponse: "The server returned data Lumen couldn't read."
+        case .unreadableResponse: "The server returned data Retune couldn't read."
         case .emptyPlaylist: "No playable entries were found in this playlist."
         case .missingPassword: "The saved password for this playlist is missing, or Keychain access was denied. Edit the playlist to re-enter it."
         case .keychain(let status): "The password couldn't be saved to your Keychain (error \(status))."
@@ -39,7 +39,7 @@ public struct XtreamClient: Sendable {
     public let credentials: XtreamCredentials
     private let session: URLSession
 
-    public init(credentials: XtreamCredentials, session: URLSession = .lumenAPI) {
+    public init(credentials: XtreamCredentials, session: URLSession = .retuneAPI) {
         self.credentials = credentials
         self.session = session
     }
@@ -49,10 +49,10 @@ public struct XtreamClient: Sendable {
     public func authenticate() async throws -> AccountInfo {
         let data = try await fetch(action: nil)
         guard let response = try? JSONDecoder().decode(XtreamAuthResponse.self, from: data) else {
-            throw LumenError.unreadableResponse
+            throw RetuneError.unreadableResponse
         }
-        guard let account = response.account else { throw LumenError.invalidCredentials }
-        guard account.isActive else { throw LumenError.accountInactive(account.status) }
+        guard let account = response.account else { throw RetuneError.invalidCredentials }
+        guard account.isActive else { throw RetuneError.accountInactive(account.status) }
         return account
     }
 
@@ -130,9 +130,9 @@ public struct XtreamClient: Sendable {
 
     // MARK: Credential-free locators
 
-    /// Watch history stores `lumen://<kind>/<file>` instead of the real stream URL, so the password never
+    /// Watch history stores `retune://<kind>/<file>` instead of the real stream URL, so the password never
     /// lands in library.json and items keep working after the password or server changes.
-    public static let locatorScheme = "lumen"
+    public static let locatorScheme = "retune"
 
     public static func locator(for streamURL: URL) -> URL? {
         // Percent-encoded, or a "/" inside the password would look like an extra path segment.
@@ -159,33 +159,33 @@ public struct XtreamClient: Sendable {
         let data = try await fetch(action: action)
         // An empty body is how throttling panels answer bursts; treating it as "no rows" would cache an
         // empty section over a good one. Genuinely empty sections come back as `[]` or `{}`.
-        if data.isEmpty { throw LumenError.emptyResponse }
+        if data.isEmpty { throw RetuneError.emptyResponse }
         if data == Data("{}".utf8) { return [] }
         guard let rows = try? JSONDecoder().decode([Failable<T>].self, from: data) else {
-            throw LumenError.unreadableResponse
+            throw RetuneError.unreadableResponse
         }
         return rows.compactMap(\.value)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, action: String, _ parameters: [String: String]) async throws -> T {
         let data = try await fetch(action: action, parameters)
-        guard !data.isEmpty else { throw LumenError.emptyResponse }
-        guard let value = try? JSONDecoder().decode(T.self, from: data) else { throw LumenError.unreadableResponse }
+        guard !data.isEmpty else { throw RetuneError.emptyResponse }
+        guard let value = try? JSONDecoder().decode(T.self, from: data) else { throw RetuneError.unreadableResponse }
         return value
     }
 
     /// Fetches with a small backoff: panels commonly throttle bursts with HTTP 222/429 and empty bodies.
     private func fetch(action: String?, _ parameters: [String: String] = [:]) async throws -> Data {
         let url = apiURL(action: action, parameters)
-        var lastError: Error = LumenError.emptyResponse
+        var lastError: Error = RetuneError.emptyResponse
         for attempt in 0..<3 {
             if attempt > 0 { try await Task.sleep(for: .milliseconds(700 * attempt)) }
             do {
                 let (data, response) = try await session.boundedData(from: url, limit: URLSession.apiResponseLimit)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 200
                 if status == 200, !(data.isEmpty && action != nil) { return data }
-                if status == 200 { lastError = LumenError.emptyResponse; continue }
-                lastError = LumenError.http(status)
+                if status == 200 { lastError = RetuneError.emptyResponse; continue }
+                lastError = RetuneError.http(status)
                 guard status == 222 || status == 429 || status >= 500 else { throw lastError }
             } catch let error as URLError where error.code == .timedOut || error.code == .networkConnectionLost {
                 lastError = error
@@ -202,7 +202,7 @@ extension URLSession {
     /// Long resource timeout: full VOD catalogs can be tens of megabytes.
     /// No URL cache or cookies: Xtream requests carry the password in the URL, and a disk cache would
     /// store it in plain text whatever the request's cache policy says.
-    public static let lumenAPI: URLSession = {
+    public static let retuneAPI: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 600
@@ -250,7 +250,7 @@ private final class BoundedDataCollector: NSObject, URLSessionDataDelegate, @unc
             return received.count > limit
         }
         guard overflowed else { return }
-        finish(.failure(LumenError.responseTooLarge))
+        finish(.failure(RetuneError.responseTooLarge))
         dataTask.cancel()
     }
 

@@ -1,4 +1,4 @@
-import LumenCore
+import RetuneCore
 import SwiftUI
 
 /// Shared hero layout: blurred backdrop, poster, title, metadata and actions.

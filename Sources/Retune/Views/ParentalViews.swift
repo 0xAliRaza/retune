@@ -1,4 +1,4 @@
-import LumenCore
+import RetuneCore
 import SwiftUI
 
 /// Shown in place of a locked category's content.
@@ -14,7 +14,7 @@ struct LockedCategoryView: View {
         VStack(spacing: 16) {
             Image(systemName: "lock.fill").font(.system(size: 44)).foregroundStyle(.secondary)
             Text("This category is locked").font(.title2.weight(.semibold))
-            Text("Enter your PIN to view it. It locks again when Lumen quits, or with ⌘L.")
+            Text("Enter your PIN to view it. It locks again when Retune quits, or with ⌘L.")
                 .foregroundStyle(.secondary)
             HStack {
                 SecureField("PIN", text: $pin)

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import LumenCore
+@testable import RetuneCore
 
 struct ServerAndURLTests {
     @Test(arguments: [
@@ -12,6 +12,18 @@ struct ServerAndURLTests {
     ])
     func normalizesServer(input: String, expected: String) {
         #expect(XtreamCredentials.normalizeServer(input)?.absoluteString == expected)
+    }
+
+    @Test(arguments: [
+        ("http://iptv.example:8080", true),
+        ("HTTP://iptv.example", true),
+        ("iptv.example:8080", true),
+        ("http://iptv.example/get.php?username=a&password=b", true),
+        ("https://iptv.example", false),
+        ("", false),
+    ])
+    func flagsPlainHTTPAddresses(input: String, expected: Bool) {
+        #expect(XtreamCredentials.usesPlainHTTP(input) == expected)
     }
 
     @Test func rejectsGarbageServer() {
@@ -183,7 +195,7 @@ struct LibraryStateTests {
 }
 
 struct SecretStoreTests {
-    private func store() -> SecretStore { SecretStore(service: "lumen.tests.\(UUID().uuidString)") }
+    private func store() -> SecretStore { SecretStore(service: "retune.tests.\(UUID().uuidString)") }
 
     @Test func storesUpdatesAndRemovesKeychainItems() throws {
         let store = store()
@@ -200,7 +212,7 @@ struct SecretStoreTests {
     @Test func migratesLegacyFileThenDeletesIt() throws {
         let store = store()
         defer { store.remove("a") }
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-legacy-\(UUID().uuidString).json")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("retune-legacy-\(UUID().uuidString).json")
         try JSONFileStore<[String: String]>(url: file).save(["a": "old-password"])
         store.migrateLegacyFile(at: file)
         #expect(store.get("a") == "old-password")
@@ -497,7 +509,7 @@ struct ReviewHardeningTests {
         let movie = Movie(id: "9", name: "M", poster: nil, categoryID: nil, rating: nil, added: nil, containerExtension: "mkv", directURL: nil)
         let real = client.movieURL(movie)
         let locator = try #require(XtreamClient.locator(for: real))
-        #expect(locator.absoluteString == "lumen://movie/9.mkv")
+        #expect(locator.absoluteString == "retune://movie/9.mkv")
         #expect(!locator.absoluteString.contains("secret"))
         #expect(client.resolve(locator) == real)
         let other = URL(string: "https://cdn.example/file.mp4")!
@@ -512,7 +524,7 @@ struct ReviewHardeningTests {
         let firstPass = state.sanitizeStreamURLs()
         let secondPass = state.sanitizeStreamURLs()
         #expect(firstPass)
-        #expect(state.progress["k"]?.item.url.absoluteString == "lumen://series/42.mkv")
+        #expect(state.progress["k"]?.item.url.absoluteString == "retune://series/42.mkv")
         #expect(!secondPass)
     }
 
@@ -540,7 +552,7 @@ struct ReviewHardeningTests {
     }
 
     @Test func corruptStoreIsBackedUpNotOverwritten() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-store-\(UUID().uuidString)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("retune-store-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("library.json")
@@ -612,13 +624,13 @@ struct XtreamRetryTests {
 
     @Test func persistentEmptyBodyIsAnErrorNotAnEmptySection() async {
         StubProtocol.responses = [(200, Data()), (200, Data()), (200, Data())]
-        await #expect(throws: LumenError.emptyResponse) { try await client().movies() }
+        await #expect(throws: RetuneError.emptyResponse) { try await client().movies() }
     }
 
     @Test func oversizedResponsesAreCutOff() async {
         StubProtocol.responses = [(200, Data(repeating: 0, count: 2048))]
         let session = StubProtocol.session()
-        await #expect(throws: LumenError.responseTooLarge) {
+        await #expect(throws: RetuneError.responseTooLarge) {
             _ = try await session.boundedData(from: URL(string: "http://stub.example/big")!, limit: 1024)
         }
     }
@@ -755,7 +767,7 @@ struct UntrustedInputTests {
 
 struct CredentialHygieneTests {
     @Test func apiSessionNeverPersistsRequests() {
-        let configuration = URLSession.lumenAPI.configuration
+        let configuration = URLSession.retuneAPI.configuration
         #expect(configuration.urlCache == nil)
         #expect(configuration.httpCookieStorage == nil)
     }
@@ -770,7 +782,7 @@ struct CredentialHygieneTests {
         let client = XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "a/b"))
         let movie = Movie(id: "9", name: "M", poster: nil, categoryID: nil, rating: nil, added: nil, containerExtension: "mkv", directURL: nil)
         let locator = try #require(XtreamClient.locator(for: client.movieURL(movie)))
-        #expect(locator.absoluteString == "lumen://movie/9.mkv")
+        #expect(locator.absoluteString == "retune://movie/9.mkv")
     }
 
     @Test func m3uIDsNeverContainTheStreamURL() {
@@ -782,7 +794,7 @@ struct CredentialHygieneTests {
     }
 
     @Test func restrictPermissionsTightensExistingFiles() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-perms-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("retune-perms-\(UUID().uuidString)")
         let nested = root.appendingPathComponent("Catalogs")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
@@ -799,10 +811,10 @@ struct CredentialHygieneTests {
     }
 
     @Test func purgeRemovesOnlyThisAppsNetworkCaches() throws {
-        let library = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-lib-\(UUID().uuidString)")
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("retune-lib-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: library) }
         let ours = library.appendingPathComponent("Caches/app.test")
-        let other = library.appendingPathComponent("Caches/Lumen/Artwork")
+        let other = library.appendingPathComponent("Caches/Retune/Artwork")
         try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
 

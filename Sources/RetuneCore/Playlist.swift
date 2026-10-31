@@ -43,6 +43,12 @@ public struct XtreamCredentials: Hashable, Codable, Sendable {
         self.password = password
     }
 
+    /// Xtream logins travel inside URLs, so a plain HTTP address exposes them to the network path.
+    /// A bare "host:8080" counts, because `normalizeServer` defaults it to HTTP.
+    public static func usesPlainHTTP(_ raw: String) -> Bool {
+        normalizeServer(raw)?.scheme?.lowercased() == "http"
+    }
+
     /// Normalises what users paste ("host:8080", "http://host:8080/", ".../player_api.php") into a base URL.
     public static func normalizeServer(_ raw: String) -> URL? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)

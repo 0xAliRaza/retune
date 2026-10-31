@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import LumenCore
+import RetuneCore
 import Observation
 
 enum LibrarySection: String, CaseIterable, Identifiable {
@@ -379,7 +379,7 @@ final class AppModel {
             let catalog: Catalog
             switch playlist.source {
             case .xtream:
-                guard let credentials = credentials(for: playlist) else { throw LumenError.missingPassword }
+                guard let credentials = credentials(for: playlist) else { throw RetuneError.missingPassword }
                 let xtream = XtreamClient(credentials: credentials)
                 client = xtream
                 catalog = try await CatalogLoader.fetchXtream(xtream)
@@ -819,7 +819,7 @@ final class AppModel {
     }
 
     func seriesDetail(_ series: Series) async throws -> SeriesDetail {
-        guard let client = loaded?.client else { throw LumenError.unreadableResponse }
+        guard let client = loaded?.client else { throw RetuneError.unreadableResponse }
         return try await client.seriesInfo(id: series.id)
     }
 }

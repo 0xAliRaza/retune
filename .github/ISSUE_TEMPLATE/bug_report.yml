@@ -5,7 +5,7 @@ body:
     attributes:
       value: >
         Please remove your server address, username and password from everything you paste.
-        Lumen can't help with provider accounts or finding sources.
+        Retune can't help with provider accounts or finding sources.
         For security problems, follow SECURITY.md instead of opening an issue.
   - type: textarea
     id: what
@@ -22,7 +22,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Lumen version, macOS version and Mac model
+      label: Retune version, macOS version and Mac model
     validations:
       required: true
   - type: dropdown

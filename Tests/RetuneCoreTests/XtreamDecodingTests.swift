@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import LumenCore
+@testable import RetuneCore
 
 // Fixtures mirror real panel responses, including their type inconsistencies.
 struct XtreamDecodingTests {

@@ -1,5 +1,5 @@
 import Foundation
-import LumenCore
+import RetuneCore
 import Observation
 
 /// Owns the player engine, the play queue (channel list or episode run) and progress reporting.

@@ -1,6 +1,6 @@
 import AppKit
 import ImageIO
-import LumenCore
+import RetuneCore
 import SwiftUI
 
 /// Downloads, downsamples and caches artwork. Posters arrive as full-size TMDB images; decoding them
@@ -20,7 +20,7 @@ actor ImagePipeline {
         // Decoded bitmaps, not files: a 1600 px backdrop is ~5–10 MB in memory.
         memory.totalCostLimit = 300 << 20
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Lumen/Artwork", isDirectory: true)
+            .appendingPathComponent("Retune/Artwork", isDirectory: true)
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 1 << 30, directory: cacheDirectory)
         configuration.requestCachePolicy = .returnCacheDataElseLoad

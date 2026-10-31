@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a self-contained Lumen.app (libmpv and every dependency copied into Contents/Frameworks)
+# Builds a self-contained Retune.app (libmpv and every dependency copied into Contents/Frameworks)
 # and a drag-to-install DMG in ./build. Requires: Swift toolchain, `brew install mpv dylibbundler`.
 #
 # The bundled Homebrew libraries target the macOS version and CPU of the Mac that built them, so the
@@ -12,17 +12,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ./scripts/build-app.sh >/dev/null
-APP="build/Lumen.app"
+APP="build/Retune.app"
 FRAMEWORKS="$APP/Contents/Frameworks"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
-DMG="build/Lumen-$VERSION.dmg"
+DMG="build/Retune-$VERSION.dmg"
 
 echo "Bundling libraries…"
 rm -rf "$FRAMEWORKS"
 mkdir -p "$FRAMEWORKS"
 # -cd: create dir · -of: overwrite · -b: bundle deps · -s: search path for @rpath dependencies
 dylibbundler -cd -of -b \
-  -x "$APP/Contents/MacOS/Lumen" \
+  -x "$APP/Contents/MacOS/Retune" \
   -d "$FRAMEWORKS" \
   -p @executable_path/../Frameworks/ \
   -s /opt/homebrew/lib >/dev/null
@@ -37,10 +37,10 @@ dedupe_rpaths() {
     done
   done < <(otool -l "$file" | grep -A2 LC_RPATH | awk '/ path /{print $2}' | sort -u)
 }
-dedupe_rpaths "$APP/Contents/MacOS/Lumen"
+dedupe_rpaths "$APP/Contents/MacOS/Retune"
 for lib in "$FRAMEWORKS"/*.dylib; do dedupe_rpaths "$lib"; done
 
-dupes=$(for file in "$APP/Contents/MacOS/Lumen" "$FRAMEWORKS"/*.dylib; do
+dupes=$(for file in "$APP/Contents/MacOS/Retune" "$FRAMEWORKS"/*.dylib; do
   otool -l "$file" | grep -A2 LC_RPATH | awk '/ path /{print $2}' | sort | uniq -d | sed "s|^|$file: |"
 done)
 if [[ -n "$dupes" ]]; then
@@ -48,7 +48,7 @@ if [[ -n "$dupes" ]]; then
 fi
 
 # Every load command must now point inside the bundle (system libraries excepted).
-leaks=$( { otool -L "$APP/Contents/MacOS/Lumen"; for lib in "$FRAMEWORKS"/*.dylib; do otool -L "$lib"; done; } \
+leaks=$( { otool -L "$APP/Contents/MacOS/Retune"; for lib in "$FRAMEWORKS"/*.dylib; do otool -L "$lib"; done; } \
   | grep -E '^\s+/(opt|usr/local)/' || true)
 if [[ -n "$leaks" ]]; then
   echo "error: unbundled dependencies remain:" >&2
@@ -56,7 +56,7 @@ if [[ -n "$leaks" ]]; then
   exit 1
 fi
 
-MIN_MACOS=$(for file in "$APP/Contents/MacOS/Lumen" "$FRAMEWORKS"/*.dylib; do
+MIN_MACOS=$(for file in "$APP/Contents/MacOS/Retune" "$FRAMEWORKS"/*.dylib; do
   vtool -show-build "$file" | awk '/minos/{print $2}'
 done | sort -V | tail -1)
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MIN_MACOS" "$APP/Contents/Info.plist"
@@ -72,7 +72,7 @@ codesign --verify --strict "$APP"
 # Smoke test: the bundled binary must actually launch (dyld rejects bad load commands at startup).
 # A throwaway home keeps it away from the real library, Keychain migration and caches.
 SMOKE_HOME="$(mktemp -d)"
-CFFIXED_USER_HOME="$SMOKE_HOME" "$APP/Contents/MacOS/Lumen" >/dev/null 2>"$APP.launch.log" &
+CFFIXED_USER_HOME="$SMOKE_HOME" "$APP/Contents/MacOS/Retune" >/dev/null 2>"$APP.launch.log" &
 LAUNCH_PID=$!
 sleep 4
 if kill -0 "$LAUNCH_PID" 2>/dev/null; then
@@ -88,13 +88,13 @@ STAGING="$(mktemp -d)"
 cp -R "$APP" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 rm -f "$DMG"
-hdiutil create -quiet -volname "Lumen" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+hdiutil create -quiet -volname "Retune" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
 rm -rf "$STAGING"
 
 echo "Built $APP ($(du -sh "$APP" | cut -f1)) and $DMG ($(du -sh "$DMG" | cut -f1)), macOS $MIN_MACOS or newer"
 if [[ "${1:-}" == "--install" ]]; then
-  pkill -x Lumen 2>/dev/null || true
-  rm -rf /Applications/Lumen.app
-  ditto "$APP" /Applications/Lumen.app
-  echo "Installed /Applications/Lumen.app"
+  pkill -x Retune 2>/dev/null || true
+  rm -rf /Applications/Retune.app
+  ditto "$APP" /Applications/Retune.app
+  echo "Installed /Applications/Retune.app"
 fi

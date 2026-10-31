@@ -1,4 +1,4 @@
-import LumenCore
+import RetuneCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,7 +10,7 @@ struct WelcomeView: View {
             Image(systemName: "play.tv.fill")
                 .font(.system(size: 64))
                 .foregroundStyle(.linearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-            Text("Welcome to Lumen").font(.largeTitle.weight(.bold))
+            Text("Welcome to Retune").font(.largeTitle.weight(.bold))
             Text("Add your IPTV subscription to start watching live TV, movies and series.")
                 .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button { model.isAddingPlaylist = true } label: {
@@ -81,13 +81,10 @@ struct PlaylistEditor: View {
                         .onChange(of: server) { autofillFromPastedLink() }
                     TextField("Username", text: $username)
                     SecureField("Password", text: $password, prompt: existing == nil ? nil : Text("Unchanged"))
-                    if usesPlainHTTP {
-                        Label("This server uses plain HTTP, so your login travels unencrypted. Use an https:// address if your provider offers one.",
-                              systemImage: "lock.open")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
+                    if XtreamCredentials.usesPlainHTTP(server) { plainHTTPWarning }
                 case .m3uURL:
                     TextField("Playlist URL", text: $m3uURL, prompt: Text("http://…/get.php?username=…&type=m3u_plus"))
+                    if XtreamCredentials.usesPlainHTTP(m3uURL) { plainHTTPWarning }
                     if XtreamCredentials.parse(fromPlaylistURL: m3uURL) != nil {
                         Label("This is an Xtream link — switching to Xtream Codes gives you series, posters and EPG.", systemImage: "sparkles")
                             .font(.callout).foregroundStyle(.secondary)
@@ -128,8 +125,10 @@ struct PlaylistEditor: View {
         .onAppear(perform: populate)
     }
 
-    private var usesPlainHTTP: Bool {
-        XtreamCredentials.normalizeServer(server)?.scheme?.lowercased() == "http"
+    private var plainHTTPWarning: some View {
+        Label("This address uses plain HTTP, so your login travels unencrypted. Use an https:// address if your provider offers one.",
+              systemImage: "lock.open")
+            .font(.callout).foregroundStyle(.secondary)
     }
 
     private var isValid: Bool {
@@ -168,7 +167,7 @@ struct PlaylistEditor: View {
         let displayName = name.trimmingCharacters(in: .whitespaces)
         switch kind {
         case .xtream:
-            guard let serverURL = XtreamCredentials.normalizeServer(server) else { errorMessage = LumenError.invalidServer.errorDescription; return }
+            guard let serverURL = XtreamCredentials.normalizeServer(server) else { errorMessage = RetuneError.invalidServer.errorDescription; return }
             let user = username.trimmingCharacters(in: .whitespaces)
             let secret = password.isEmpty ? (model.secrets.get(id.uuidString) ?? "") : password
             isVerifying = true

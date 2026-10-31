@@ -1,4 +1,4 @@
-import LumenCore
+import RetuneCore
 import SwiftUI
 
 /// Display-ready description of one channel, movie or series. Built lazily per visible cell.
