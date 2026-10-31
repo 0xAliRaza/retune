@@ -3,8 +3,9 @@ import Security
 
 /// Playlist passwords, kept in the user's login Keychain.
 ///
-/// Builds that aren't signed with a stable identity get a one-time "allow access" prompt after each
-/// update, because the Keychain ties access to the app's code signature.
+/// Builds that aren't signed with a stable identity get "allow access" prompts after each update,
+/// because the Keychain ties access to the app's code signature. A single read can show two: one for
+/// the item's access list and one for its partition list.
 public struct SecretStore: Sendable {
     private let service: String
 

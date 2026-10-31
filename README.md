@@ -178,7 +178,7 @@ This produces a self-contained app and DMG in `build/`.
 3. Wait for the first catalog download. After that, Retune opens instantly and refreshes in the background.
 
 > [!NOTE]
-> **Don't be alarmed by a password popup.** You won't see one on a fresh install, but after an update macOS may say Retune wants to use confidential information in your Keychain, and ask for your login keychain password. That's your normal Mac password. Type it and click **Always Allow**. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
+> **Don't be alarmed by a password popup.** You won't see one on a fresh install, but after an update macOS may say Retune wants to use confidential information in your Keychain, and ask for your login keychain password, possibly twice in a row. That's your normal Mac password. Type it and click **Always Allow** each time. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
 
 ## Your questions about security and privacy
 
@@ -196,6 +196,7 @@ Because your provider password is locked in the Keychain, and macOS is checking 
 
 - **Retune never sees your Mac password.** You're typing into a macOS system dialog, and the app only gets a yes or no.
 - **"Login keychain password" just means your Mac password,** unless you've deliberately changed it.
+- **Two popups in a row are expected.** macOS checks two separate permissions before a new build can read the password, and each one asks.
 - **Always Allow** stops the popup until Retune next changes. **Allow** works for this one time. **Deny** is safe too, but Retune won't be able to log in until you allow it or enter your provider password again.
 
 The Keychain is what well-built Mac apps use to store passwords. You rarely see this popup from them because they're signed with a paid Apple Developer ID, which gives every version the same identity. Retune doesn't have one yet, so macOS ties the permission to the exact build, and each update looks like a new app.
