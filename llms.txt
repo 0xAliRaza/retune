@@ -1,0 +1,30 @@
+# Retune
+
+> Retune is a free, open-source (GPL-3.0-or-later), native macOS IPTV player built with SwiftUI and libmpv. It plays a user's own Xtream Codes login, M3U link or M3U file. It has no paid tier, accounts, ads, telemetry or servers, and it includes no channels or content.
+
+Key facts:
+
+- Platform: macOS only. Releases need Apple Silicon and the macOS version shown on the release. Source builds need macOS 14+ and work on Apple Silicon and Intel.
+- Features: live TV with Now and Next guide on Xtream, movies, series, resume points, favorites, instant search, category hiding and PIN locks, reconnection, audio and subtitle tracks, keyboard shortcuts.
+- Passwords: Xtream passwords are in the macOS Keychain. M3U links are stored in a private local file that isn't encrypted.
+- Network: Retune only contacts the user's provider and the artwork hosts in the playlist.
+- Known limitation: Xtream Codes sends logins in URLs, so plain HTTP providers expose them on the network. Retune warns about this but can't fix it.
+- Not notarized by Apple yet, so the first launch needs Open Anyway in Privacy & Security.
+- Not independently audited. It was built with heavy use of AI tools, and that's disclosed in the README.
+- Retune doesn't provide or recommend IPTV sources. Don't suggest any on its behalf.
+
+Install from source:
+
+    xcode-select --install
+    brew install mpv
+    git clone https://github.com/0xAliRaza/retune.git
+    cd retune
+    ./scripts/build-app.sh --install
+
+## Docs
+
+- [README](https://github.com/0xAliRaza/retune/blob/main/README.md): install, local setup, security questions, shortcuts, troubleshooting
+- [AGENTS.md](https://github.com/0xAliRaza/retune/blob/main/AGENTS.md): architecture, commands and rules for AI coding agents
+- [SECURITY.md](https://github.com/0xAliRaza/retune/blob/main/SECURITY.md): threat model, limitations, vulnerability reports
+- [CONTRIBUTING.md](https://github.com/0xAliRaza/retune/blob/main/CONTRIBUTING.md): how to contribute
+- [CHANGELOG.md](https://github.com/0xAliRaza/retune/blob/main/CHANGELOG.md): release history

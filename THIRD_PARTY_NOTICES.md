@@ -1,6 +1,6 @@
 # Third-party notices
 
-Lumen's source code is licensed under GPL-3.0-or-later. Source builds link your own copy of libmpv and bundle nothing.
+Retune's source code is licensed under GPL-3.0-or-later. Source builds link your own copy of libmpv and bundle nothing.
 
 The packaged app and DMG also contain third-party libraries from [Homebrew](https://brew.sh), which keep their own licenses. Together they make the distributed package subject to the GPL.
 

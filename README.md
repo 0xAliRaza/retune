@@ -1,78 +1,280 @@
-# Lumen
+<div align="center">
 
-A free, open-source, native macOS player for your own IPTV subscription. Log in with Xtream Codes or an M3U playlist, and get live TV, movies and series in a fast, keyboard-first Mac app.
+<img src="docs/icon.png" width="112" alt="Retune app icon">
 
-No ads, no account, no telemetry. Built with SwiftUI and [libmpv](https://mpv.io).
+# Retune
+
+**A small, private, keyboard-driven IPTV player for the Mac.**
+
+Free and open source. No paid tier, no accounts, no ads, no tracking.
+
+[![CI](https://github.com/0xAliRaza/retune/actions/workflows/ci.yml/badge.svg)](https://github.com/0xAliRaza/retune/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+![macOS](https://img.shields.io/badge/macOS-native-lightgrey)
+
+[Download](#install) · [Run it locally](#run-it-locally) · [Security](#your-questions-about-security-and-privacy) · [Shortcuts](#keyboard-shortcuts)
+
+<img src="docs/screenshots/movies.png" width="860" alt="Retune browsing a demo movie library">
+
+<sub>Screenshots use made-up demo data.</sub>
+
+</div>
 
 > [!IMPORTANT]
-> **Lumen is only a player. It includes no channels, playlists, subscriptions or media, and it isn't affiliated with any provider.** You bring your own legally obtained source, and you're responsible for having the rights to whatever you watch through it.
+> **Retune is only a player.** It comes with no channels, playlists, subscriptions or media, and it isn't affiliated with any provider. You bring your own legal source, and you're responsible for having the rights to what you watch.
 
-## Why Lumen
+## Why Retune exists
 
-Most Mac IPTV apps are subscriptions, iPad ports or Electron wrappers. I wanted a player that felt like a proper Mac app, so I built one for myself and published it for anyone with the same problem.
+You already pay your IPTV provider. Paying again, every month, just for an app to open that service felt wrong to me, so I built the player I wanted and kept using it.
 
-- **Native and fast.** SwiftUI interface, hardware decoding through mpv, and instant browsing across catalogs of 80,000+ titles.
-- **Keyboard first.** Everything has a shortcut, and channel surfing works like a TV remote.
-- **Yours.** Free and open source, with no servers of its own. Your login goes only to your provider.
+When my own subscription was about to end, I decided to clean it up and give it away. If you've got a provider and a Mac, you shouldn't need a second subscription to press play.
 
-## Features
+Plenty of Mac IPTV players are good, and many are worth paying for. Retune is for you if you want something smaller:
 
-- **Sources:** Xtream Codes, M3U links and local M3U files, with several playlists side by side
-- **Live TV:** Now/Next guide on Xtream, recently watched, last-channel jump, and automatic reconnection when a stream drops
-- **Movies and series:** posters, plots, seasons, resume points, Continue Watching and next-episode autoplay
-- **Library:** favorites, instant accent-insensitive search, and hide, pin or lock categories
-- **Parental lock:** PIN-protected categories
-- **Playback:** audio and subtitle tracks, subtitle styling and timing, playback speed, screenshots and a stats overlay
-- **Layouts:** grid, list and compact views per section
+- **It's a real Mac app.** Built with SwiftUI, with hardware decoding through [mpv](https://mpv.io). Not a web page in a wrapper.
+- **It keeps up with big catalogs.** Tested against a real provider with over 88,000 channels, movies and series.
+- **Your hands can stay on the keyboard.** Every action has a shortcut, and flipping channels works like a TV remote.
+- **It's yours.** There's no Retune server, account or analytics. Your login only goes to your provider.
+- **You can read all of it.** About 7,000 lines of Swift, GPL-licensed.
 
-Series and the Now/Next guide need an Xtream Codes login, because M3U playlists don't carry that data.
+## What you get
+
+| | |
+| --- | --- |
+| **Sources** | Xtream Codes, M3U links and local M3U files, with several playlists side by side |
+| **Live TV** | Now and Next guide on Xtream, recent channels, last-channel jump, automatic reconnection |
+| **Movies and series** | Posters, plots, seasons, resume points, Continue Watching, next-episode autoplay |
+| **Library** | Favorites, instant accent-insensitive search, and hide, pin or lock categories |
+| **Playback** | Audio and subtitle tracks, subtitle styling and timing, speed control, screenshots, stats overlay |
+| **Family** | PIN-protected categories |
+| **Layouts** | Grid, list and compact views for each section |
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/live.png" alt="Live TV channel list with demo channels"></td>
+    <td><img src="docs/screenshots/series.png" alt="Series grid with demo posters"></td>
+  </tr>
+</table>
+
+Series and the Now and Next guide need an Xtream Codes login, because M3U playlists don't carry that data.
+
+**Not here yet:** iPhone, iPad, Apple TV and Windows versions, recording, Picture in Picture, media keys, and full VoiceOver labels. Retune is a Mac app, and it will stay small.
 
 ## Install
 
 ### Download
 
-Get the DMG from the [Releases](../../releases) page, open it and drag Lumen to Applications.
+1. Get the DMG from the [latest release](https://github.com/0xAliRaza/retune/releases/latest).
+2. Open it and drag **Retune** to **Applications**.
+3. Open Retune. macOS will block it the first time, because the app isn't notarized by Apple yet.
+4. Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
+5. After you add a playlist, macOS will [ask for your Mac password](#why-does-macos-ask-for-my-mac-password). That's expected. Type it and click **Always Allow**.
 
-Each download needs **Apple Silicon** and at least the macOS version shown on its release, because it bundles libraries built for that system. On an older Mac, build from source instead.
+Each download needs **Apple Silicon** and the macOS version listed on its release, because the bundled libraries are built for that system. If your Mac doesn't match, [run it locally](#run-it-locally) instead.
 
-Releases aren't notarized by Apple yet, so macOS blocks the first launch. To open Lumen anyway:
+Why isn't it notarized? Apple charges $99 a year for that, and this is a free project for now. If you'd rather not trust a downloaded binary, building it yourself takes a few minutes.
 
-1. Try to open Lumen, then dismiss the warning.
-2. Open **System Settings → Privacy & Security**.
-3. Scroll down and click **Open Anyway**.
+## Run it locally
 
-### Build from source
+This builds Retune from source on your own Mac, so you know exactly what you're running.
 
-You need macOS 14 or newer, the Xcode Command Line Tools and [Homebrew](https://brew.sh). Apple Silicon and Intel both build.
+### 1. Check that you have what you need
+
+- macOS 14 or newer, on Apple Silicon or Intel
+- About 2 GB of free disk space
+- [Homebrew](https://brew.sh)
+
+### 2. Install Apple's command line tools
+
+You don't need the full Xcode app.
+
+```bash
+xcode-select --install
+```
+
+If it says they're already installed, that's fine.
+
+### 3. Install libmpv
+
+This is the playback engine. It pulls in FFmpeg too, so it can take several minutes.
 
 ```bash
 brew install mpv
 ```
 
+### 4. Get the code
+
 ```bash
-git clone https://github.com/0xAliRaza/Lumen.git
+git clone https://github.com/0xAliRaza/retune.git
 ```
 
 ```bash
-cd Lumen && ./scripts/build-app.sh --install
+cd retune
 ```
 
-This installs Lumen into `/Applications`. A source build uses your Homebrew libmpv, so keep `mpv` installed. Run `./scripts/package.sh` for a self-contained app and DMG, which also needs `brew install dylibbundler`.
+### 5. Build and install
+
+```bash
+./scripts/build-app.sh --install
+```
+
+This compiles a release build and puts `Retune.app` in `/Applications`. Open it like any other app.
+
+To build without installing, leave off `--install`, and the app lands in `build/Retune.app`.
+
+> [!NOTE]
+> **Expect a password popup.** After you add a playlist, macOS will ask for your Mac password so Retune can use your Keychain. This is normal, and it'll come back after each rebuild. [Here's why](#why-does-macos-ask-for-my-mac-password).
+
+### Running it for development
+
+```bash
+swift run Retune
+```
+
+```bash
+./scripts/test.sh
+```
+
+Use `./scripts/test.sh` rather than `swift test`. It also works when you only have the command line tools.
+
+### Updating
+
+```bash
+git pull && ./scripts/build-app.sh --install
+```
+
+A local build links your Homebrew libmpv, so keep `mpv` installed. macOS asks for your Mac password again after each rebuild, because the Keychain ties access to the app's exact signature. Click **Always Allow** and it stays quiet until the next rebuild.
+
+### Making your own DMG
+
+```bash
+brew install dylibbundler
+```
+
+```bash
+./scripts/package.sh
+```
+
+This produces a self-contained app and DMG in `build/`.
+
+### If the build fails
+
+| Message | Fix |
+| --- | --- |
+| `mpv/client.h file not found` | Run `brew install mpv`, then try again. |
+| `no such module 'Testing'` | Use `./scripts/test.sh` instead of `swift test`. |
+| Odd errors after moving the folder | Run `swift package clean`, then rebuild. |
+| `xcrun: error: invalid active developer path` | Run `xcode-select --install`. |
+| The app opens, then quits immediately | Run `brew upgrade mpv`, then rebuild. |
 
 ## Getting started
 
-1. Open Lumen and click **Add Playlist**.
-2. Pick a source type:
+1. Open Retune and click **Add Playlist**.
+2. Choose how you connect:
    - **Xtream Codes:** enter your server, username and password. Pasting a full `get.php` link into the server field fills in all three.
    - **M3U URL:** paste your playlist link.
    - **M3U File:** choose a `.m3u` or `.m3u8` file.
-3. Lumen downloads the catalog, then opens it instantly on later launches and refreshes it in the background.
+3. Wait for the first catalog download. After that, Retune opens instantly and refreshes in the background.
 
-macOS may ask to let Lumen use your Keychain. Choose **Always Allow**. Unsigned builds ask again after each update.
+> [!NOTE]
+> **Don't be alarmed by the password popup.** macOS will say Retune wants to use confidential information in your Keychain, and ask for your login keychain password. That's your normal Mac password. Type it and click **Always Allow**. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
+
+## Your questions about security and privacy
+
+You're giving an app your login and pointing it at the internet, so these are fair things to ask. Here are straight answers, including the parts that aren't perfect.
+
+### Where does my password go?
+
+Into the **macOS Keychain**, the same place Safari keeps passwords. It's never written to a Retune file, never logged, and only sent to the server you entered.
+
+M3U links are different. A provider's M3U link often has your password inside it, and Retune stores that link in a local file, because a link isn't a login field it can separate out. The file is readable only by your macOS user, but it isn't encrypted.
+
+### Why does macOS ask for my Mac password?
+
+Because your provider password is locked in the Keychain, and macOS is checking that you're happy for Retune to read it. The popup comes from macOS itself:
+
+- **Retune never sees your Mac password.** You're typing into a macOS system dialog, and the app only gets a yes or no.
+- **"Login keychain password" just means your Mac password,** unless you've deliberately changed it.
+- **Always Allow** stops the popup until Retune next changes. **Allow** works for this one time. **Deny** is safe too, but Retune won't be able to log in until you allow it or enter your provider password again.
+
+It returns after an update because macOS ties that permission to the app's exact signature, and each build without a paid Apple signature looks like a new app. Apps signed through the Apple Developer Program don't have this problem.
+
+Only ever type your Mac password into this kind of system dialog. If something inside the Retune window itself asks for it, don't enter it, and please [report it](SECURITY.md).
+
+### Is my login sent securely?
+
+**That depends on your provider, and often it isn't.** The Xtream Codes system puts your username and password directly in web addresses, and most providers only offer plain HTTP. On plain HTTP, anyone on the network path, such as a shared Wi-Fi network, could read your login and see what you're watching.
+
+Retune can't fix that, but it won't hide it. It warns you when you enter a plain HTTP address, and it uses HTTPS whenever your provider supports it. A VPN you trust protects the part between you and the VPN.
+
+<img src="docs/screenshots/plain-http-warning.png" width="420" alt="The playlist form warning that an address uses plain HTTP">
+
+For this reason, don't reuse your IPTV password anywhere else.
+
+### Does Retune track me or phone home?
+
+No. There's no analytics, crash reporting, ads, account or update check. Retune only contacts your provider, plus the artwork hosts your playlist points to. Those hosts can see your IP address when posters load, as with any image on the web.
+
+You don't have to take my word for it: search the code, or watch the app's traffic in a tool like [Little Snitch](https://www.obdev.at/products/littlesnitch/).
+
+### Can a bad playlist harm my Mac?
+
+Retune treats every playlist, server response, image and stream as hostile:
+
+- Only network streaming addresses reach the player. That blocks mpv's special addresses, which could otherwise read or overwrite local files. A real version of this bug was found and fixed before release.
+- mpv's scripting and yt-dlp support are off.
+- Downloads have size limits and timeouts, and odd dates and durations are bounds-checked.
+
+No software can promise perfection. Video decoders are complex, and Retune doesn't use the App Sandbox yet, so a serious bug in mpv or FFmpeg could reach your files. Stay on the latest release, and keep `mpv` updated if you built from source.
+
+### What's stored on my Mac?
+
+Everything is in `~/Library/Application Support/Retune`, private to your macOS user:
+
+| File | Contents |
+| --- | --- |
+| `playlists.json` | Playlist names and server addresses, and M3U links |
+| `Catalogs/` | Cached channel, movie and series lists |
+| `library.json` | Favorites, watch progress and hidden categories |
+
+Watch history stores anonymous references rather than stream addresses, so your password doesn't end up there. These files aren't encrypted, so they're included in unencrypted backups.
+
+### Is the app safe to open if it's not notarized?
+
+Notarization means Apple scanned a build. It doesn't mean a security review. Still, I understand if you'd rather be careful. You can check the DMG's published checksum, or better, [build it yourself](#run-it-locally).
+
+### How strong is the parental PIN?
+
+It's enough to stop a child, not a determined adult. The PIN is stored as a salted PBKDF2 hash, but a short PIN can be guessed by anyone with access to your macOS account.
+
+### Is this legal?
+
+The player is. IPTV is just a way of delivering video, and plenty of it is legitimate. What you stream through it is your responsibility. Retune doesn't provide or recommend sources, and issues asking for them will be closed.
+
+### Was this built with AI?
+
+Yes, heavily. I'll tell you exactly what that means [below](#how-this-was-built).
+
+### How do I delete everything?
+
+1. Quit Retune and drag it from Applications to the Trash.
+2. Remove its data:
+
+```bash
+rm -rf ~/Library/Application\ Support/Retune ~/Library/Caches/Retune ~/Library/Caches/io.github.0xaliraza.retune ~/Library/HTTPStorages/io.github.0xaliraza.retune
+```
+
+```bash
+defaults delete io.github.0xaliraza.retune
+```
+
+3. Open **Keychain Access**, search for `retune`, and delete its entries.
+
+[SECURITY.md](SECURITY.md) has the full threat model, known limitations and how to report a vulnerability privately.
 
 ## Keyboard shortcuts
 
-Press `?` in the app to see this list.
+Press `?` in the app to see these anytime.
 
 ### Player
 
@@ -108,45 +310,47 @@ Press `?` in the app to see this list.
 | `⇧⌘N` | Add playlist |
 | `⌘L` | Lock categories again |
 
-## Privacy and security
-
-- Lumen talks only to your provider and the artwork hosts your playlist points to. There's no analytics, telemetry or update check.
-- Xtream passwords live in the macOS Keychain. Playlists, catalogs and history stay in `~/Library/Application Support/Lumen`, readable only by your user.
-- Playlists are treated as untrusted input: only network streaming addresses reach the player, and responses are size-limited.
-- Many IPTV providers only offer plain HTTP. On those servers your login and streams travel unencrypted, and Lumen warns you when you add one.
-
-[SECURITY.md](SECURITY.md) covers the threat model, known limitations and how to report a vulnerability.
-
 ## Troubleshooting
 
 | Problem | What to try |
 | --- | --- |
-| A channel won't start | Your plan may be at its connection limit. Stop playback on other devices, then retry. |
-| Audio or video stutters | In **Settings**, switch the live format to HLS, which copes better with weak connections. |
-| A channel has no sound | Lumen shows a notice when the stream itself carries no audio track. That's a provider issue. |
-| A live channel jumps back after a dropout | Lumen reconnects when a stream drops. If your provider's backup server runs behind, it resends older video, and no player can avoid that. |
-| "Saved password is missing" | Keychain access was denied. Edit the playlist and re-enter the password. |
+| A channel won't start | Your plan may be at its connection limit. Stop playback on other devices and retry. |
+| Audio or video stutters | In **Settings**, change the live stream format to HLS, which copes better with weak connections. |
+| A channel has no sound | Retune shows a notice when the stream has no audio track. That's a provider issue. |
+| A live channel jumps back after a dropout | Retune reconnects when a stream drops. If your provider's backup server is behind, it sends older video, and no player can avoid that. |
+| "Saved password is missing" | Keychain access was denied. Edit the playlist and enter your password again. |
+| macOS asks for your password after an update | [That's expected](#why-does-macos-ask-for-my-mac-password). Enter your Mac login password and click **Always Allow**. |
 
-Lumen can't help with provider accounts or find you a source, so please keep issues about the app itself.
-
-## Development
-
-```text
-Sources/CMPV       libmpv bindings
-Sources/LumenCore  Provider API, parsing, library state, persistence (no UI, fully testable)
-Sources/Lumen      SwiftUI app and the mpv player
-Tests              Unit tests for LumenCore
-scripts            Build, test and packaging
-```
-
-Run the tests with `./scripts/test.sh`. It also works with only the Command Line Tools installed. See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
+Retune can't help with provider accounts or find you a source, so please keep issues about the app itself.
 
 ## How this was built
 
-Lumen started as a personal tool to replace a paid IPTV app, and it was written with heavy use of AI coding tools, chiefly [Claude Code](https://claude.com/claude-code). Before release it went through a security review, fault-injection testing of the live player, and regression tests for every fix. If you spot something wrong, please open an issue.
+Retune began as a tool for one person, me, and it was written with heavy use of AI, chiefly [Claude Code](https://claude.com/claude-code). I think you should know that, along with what was done about the risks.
+
+Before release, it went through:
+
+- A security review of how it handles passwords, playlists and network data, which found and fixed real problems, including the file overwrite bug above and passwords sitting in a network cache
+- Fault-injection testing of the live player, with connections cut on purpose, which found the root cause of a replay glitch
+- Testing against a real provider's live TV, movies and series
+- Automated tests for the core logic, with bug-fix tests proven to fail without their fix
+- Secret scanning of the full git history in CI
+
+It has **not** had an independent security audit. If you find a problem, please [report it](SECURITY.md), and I'll fix it.
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). If you're using an AI coding tool, point it at [AGENTS.md](AGENTS.md), which has the architecture and project rules.
+
+```text
+Sources/CMPV        libmpv bindings
+Sources/RetuneCore  Provider API, parsing, library state and storage (no UI, fully testable)
+Sources/Retune      SwiftUI app and the mpv player
+Tests               Unit tests for RetuneCore
+scripts             Build, test and packaging
+```
 
 ## License
 
-Lumen is free software under the [GNU General Public License v3.0 or later](LICENSE). The GPL fits because the packaged app bundles libmpv and FFmpeg builds that are themselves GPL-licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Retune is free software under the [GNU General Public License v3.0 or later](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the libraries bundled in the packaged app.
 
-Lumen is built on [mpv](https://mpv.io) and [FFmpeg](https://ffmpeg.org), which do the hard work.
+Retune stands on [mpv](https://mpv.io) and [FFmpeg](https://ffmpeg.org), which do the hard work.

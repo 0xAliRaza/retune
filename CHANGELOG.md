@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-10-31
 
-First public version.
+First public version. Earlier private builds were called Lumen.
 
 ### Security
 
@@ -16,7 +16,7 @@ First public version.
 
 ### Fixed
 
-- Live channels no longer jump back into earlier video after a dropped connection. FFmpeg was reconnecting inside the running stream, which hid the failure and spliced in whatever the server sent next. Lumen now reconnects cleanly itself.
+- Live channels no longer jump back into earlier video after a dropped connection. FFmpeg was reconnecting inside the running stream, which hid the failure and spliced in whatever the server sent next. Retune now reconnects cleanly itself.
 - Unseekable on-demand files can no longer restart from the beginning after a connection drop.
 - The display no longer sleeps during playback.
 - A failed start, or leaving before the first frame, no longer overwrites a saved resume point.
@@ -31,4 +31,4 @@ First public version.
 - Packaged builds declare their true minimum macOS version.
 - Source builds work with Apple Silicon and Intel Homebrew.
 - Developer flags are removed from release builds.
-- The Add Playlist form warns when a server uses plain HTTP.
+- The Add Playlist form warns when an Xtream server or M3U link uses plain HTTP.
