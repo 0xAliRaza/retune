@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import RetuneCore
 import Observation
@@ -65,6 +66,29 @@ final class PlaybackSession {
         queue = items
         start(at: position, startAt: startAt)
         previousIndex = nil
+    }
+
+    /// Saves the frame on screen to the Desktop, and reports whether a file was written.
+    func saveScreenshot(completion: @escaping @MainActor (Bool) -> Void) {
+        guard engine.hasVideoFrame else { return completion(false) }
+        let url = ScreenshotFile.url(in: FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0])
+        let layer = videoView.videoLayer
+        layer.captureFrame { image in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let saved = image.flatMap { Self.writePNG($0, to: url) } ?? false
+                Task { @MainActor in completion(saved) }
+            }
+        }
+        // A window that can't draw never delivers a frame, so don't wait for one forever.
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if layer.cancelCapture() { completion(false) }
+        }
+    }
+
+    private nonisolated static func writePNG(_ image: CGImage, to url: URL) -> Bool {
+        guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return false }
+        return (try? data.write(to: url, options: .withoutOverwriting)) != nil
     }
 
     func playNext() { step(1) }

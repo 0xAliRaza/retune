@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The `S` shortcut saves a screenshot with hardware-decoded video. It used to fail silently while reporting success, and it now shows an error if the file can't be written.
+
 ## 1.0.0 - 2026-10-31
 
 First public version. Earlier private builds were called Lumen.

@@ -138,7 +138,6 @@ final class MPVPlayer {
             ("alang", Self.preferredLanguages),
             ("sub-font-size", "40"),
             ("sub-border-size", "2.5"),
-            ("screenshot-directory", "~/Desktop"),
         ]
         for (name, value) in options + subtitleStyle.mpvOptions { mpv_set_option_string(handle, name, value) }
         volume = storedVolume
@@ -259,7 +258,6 @@ final class MPVPlayer {
 
     func selectSubtitle(_ track: MediaTrack?) { setProperty("sid", track.map { String($0.id) } ?? "no") }
 
-    func screenshot() { command("screenshot") }
 
     // MARK: Subtitles
 

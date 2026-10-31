@@ -848,3 +848,21 @@ struct PINHashTests {
         #expect(!PINHash.verify("1234", against: "pbkdf2-sha256$x$y$z"))
     }
 }
+
+@Suite struct ScreenshotFileTests {
+    @Test func namesFilesFromTheTimeInTheChosenFolder() throws {
+        let folder = URL(fileURLWithPath: "/tmp/shots", isDirectory: true)
+        let zone = try #require(TimeZone(secondsFromGMT: 0))
+        let url = ScreenshotFile.url(in: folder, date: Date(timeIntervalSince1970: 0), timeZone: zone)
+        #expect(url.path == "/tmp/shots/Retune 1970-01-01 at 00.00.00.000.png")
+    }
+
+    @Test func flipsRowsTopToBottomAndKeepsPixelOrder() {
+        #expect(ScreenshotFile.flippedRows([1, 2, 3, 4, 5, 6], bytesPerRow: 2) == [5, 6, 3, 4, 1, 2])
+    }
+
+    @Test func flippingSurvivesEmptyInput() {
+        #expect(ScreenshotFile.flippedRows([], bytesPerRow: 4).isEmpty)
+        #expect(ScreenshotFile.flippedRows([1, 2], bytesPerRow: 0).isEmpty)
+    }
+}

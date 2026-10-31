@@ -9,7 +9,7 @@ The packaged app and DMG also contain third-party libraries from [Homebrew](http
 | [mpv](https://mpv.io) (libmpv) | GPL-2.0-or-later, parts LGPL-2.1-or-later | https://github.com/mpv-player/mpv |
 | [FFmpeg](https://ffmpeg.org), built with GPL components | GPL-3.0-or-later | https://git.ffmpeg.org/ffmpeg.git |
 | [x264](https://www.videolan.org/developers/x264.html) | GPL-2.0-or-later | https://code.videolan.org/videolan/x264 |
-| [x265](https://www.x265.org) | GPL-2.0-or-later | https://bitbucket.org/multicoreware/x265_git |
+| [x265](https://github.com/Multicorewareinc/x265) | GPL-2.0-or-later | https://github.com/Multicorewareinc/x265 |
 | [Rubber Band](https://breakfastquay.com/rubberband/) | GPL-2.0-or-later | https://github.com/breakfastquay/rubberband |
 
 Other bundled libraries are listed below. Their licenses and exact sources are recorded in the [Homebrew formula](https://formulae.brew.sh) of the same name, for the versions current when the release was built.

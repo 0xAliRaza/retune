@@ -6,7 +6,7 @@ import RetuneCore
 /// Developer hooks that run a stored playlist through the app's real code path without touching the UI.
 /// They log health numbers only, never stream addresses, logins or titles.
 ///
-///   Retune --probe refresh|live|movie|episode|resume [--probe-index 0] [--probe-seconds 30]
+///   Retune --probe refresh|live|movie|episode|resume [--probe-index 0] [--probe-seconds 30] [--probe-screenshot]
 ///   Retune --screens <folder>
 ///
 /// `--probe` plays the chosen item and logs one line a second. It uses a null audio output, so it can't reach
@@ -49,6 +49,9 @@ enum DevProbe {
         for second in 1...seconds {
             try? await Task.sleep(for: .seconds(1))
             logHealth(second: second, model: model)
+            if second == 3, CommandLine.arguments.contains("--probe-screenshot") {
+                model.session.saveScreenshot { saved in log.notice("screenshot saved=\(saved)") }
+            }
         }
         log.notice("probe done")
         NSApp.terminate(nil)

@@ -226,7 +226,9 @@ struct PlayerScreen: View {
             return true
         case "l": if session.queue.count > 1 { showQueue.toggle() }; return true
         case "n": if event.modifierFlags.contains(.shift) { session.playPrevious() } else { session.playNext() }; return true
-        case "s": engine.screenshot(); showFlash("Screenshot saved to Desktop"); return true
+        case "s":
+            session.saveScreenshot { saved in showFlash(saved ? "Screenshot saved to Desktop" : "Couldn't save the screenshot") }
+            return true
         case "i": showStats.toggle(); return true
         case "c":
             if let on = engine.toggleSubtitles() {

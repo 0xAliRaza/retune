@@ -2,6 +2,7 @@ import AppKit
 import CMPV
 import OpenGL.GL3
 import os
+import RetuneCore
 import SwiftUI
 
 /// Resolves OpenGL entry points for libmpv's renderer.
@@ -26,6 +27,8 @@ final class MPVVideoLayer: CAOpenGLLayer {
     private var glContext: CGLContextObj?
     /// Separate from `lock` so a main-thread resize never waits behind a render blocked on frame timing.
     private let needsRedraw = OSAllocatedUnfairLock(initialState: true)
+    /// Also separate from `lock`, so asking for a screenshot never blocks the main thread on frame timing.
+    private let pendingCapture = OSAllocatedUnfairLock<((CGImage?) -> Void)?>(uncheckedState: nil)
 
     init(handle: OpaquePointer?) {
         self.handle = handle
@@ -51,6 +54,21 @@ final class MPVVideoLayer: CAOpenGLLayer {
 
     func requestRedraw() {
         needsRedraw.withLock { $0 = true }
+    }
+
+    /// Reads back the next rendered frame. mpv's own screenshot command can't read hardware-decoded frames,
+    /// but the finished picture in the framebuffer is always available. `completion` runs on the render thread.
+    func captureFrame(completion: @escaping (CGImage?) -> Void) {
+        pendingCapture.withLockUnchecked { $0 = completion }
+        requestRedraw()
+    }
+
+    /// Drops a capture that hasn't run, for example because the display is asleep. Returns whether one was waiting.
+    func cancelCapture() -> Bool {
+        pendingCapture.withLockUnchecked { pending in
+            defer { pending = nil }
+            return pending != nil
+        }
     }
 
     override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
@@ -108,7 +126,11 @@ final class MPVVideoLayer: CAOpenGLLayer {
         lock.withLock {
             glClearColor(0, 0, 0, 1)
             glClear(GLbitfield(GL_COLOR_BUFFER_BIT))
-            guard let renderContext else { glFlush(); return }
+            guard let renderContext else {
+                glFlush()
+                finishCapture(with: nil)
+                return
+            }
 
             var framebuffer: GLint = 0
             glGetIntegerv(GLenum(GL_DRAW_FRAMEBUFFER_BINDING), &framebuffer)
@@ -127,9 +149,35 @@ final class MPVVideoLayer: CAOpenGLLayer {
                     mpv_render_context_render(renderContext, &params)
                 }
             }
+            if pendingCapture.withLockUnchecked({ $0 != nil }) {
+                finishCapture(with: readFramebuffer(framebuffer, width: Int(viewport[2]), height: Int(viewport[3])))
+            }
             glFlush()
             mpv_render_context_report_swap(renderContext)
         }
+    }
+
+    private func finishCapture(with image: CGImage?) {
+        let completion = pendingCapture.withLockUnchecked { pending in
+            defer { pending = nil }
+            return pending
+        }
+        completion?(image)
+    }
+
+    private func readFramebuffer(_ framebuffer: GLint, width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0 else { return nil }
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+        glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(framebuffer))
+        glPixelStorei(GLenum(GL_PACK_ALIGNMENT), 4)
+        glReadPixels(0, 0, GLsizei(width), GLsizei(height), GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), &pixels)
+        let data = Data(ScreenshotFile.flippedRows(pixels, bytesPerRow: bytesPerRow))
+        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+                       space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
 
     /// Frees the render context; called from the main thread at shutdown.
