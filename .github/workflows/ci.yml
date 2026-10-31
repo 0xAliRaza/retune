@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Pushes only scan their new commits, so the secret scan covers the full history here.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
