@@ -2,7 +2,8 @@ import Foundation
 import LumenCore
 import OSLog
 
-/// Developer hook: `Lumen --play <file or URL>` opens the player on that media and logs playback
+#if DEBUG
+/// Developer hook: `Lumen --play <URL> [--live]` opens the player on that stream and logs playback
 /// health, so rendering changes can be verified without clicking through the UI:
 ///   log show --last 1m --predicate 'subsystem == "app.lumen" AND category == "dev"'
 @MainActor
@@ -45,10 +46,9 @@ enum DevPlayback {
         benchIfRequested(model)
         let arguments = CommandLine.arguments
         guard let flag = arguments.firstIndex(of: "--play"), arguments.indices.contains(flag + 1) else { return }
-        let target = arguments[flag + 1]
-        let url = target.contains("://") ? URL(string: target) : URL(fileURLWithPath: target)
-        guard let url else { return }
-        model.playDirect(PlaybackItem(id: "dev", kind: .movie, title: url.lastPathComponent, url: url))
+        guard let url = URL(string: arguments[flag + 1]) else { return }
+        let kind: ContentKind = arguments.contains("--live") ? .live : .movie
+        model.playDirect(PlaybackItem(id: "dev", kind: kind, title: url.lastPathComponent, url: url))
         Task {
             for second in stride(from: 2, through: 8, by: 2) {
                 try? await Task.sleep(for: .seconds(2))
@@ -59,3 +59,4 @@ enum DevPlayback {
         }
     }
 }
+#endif

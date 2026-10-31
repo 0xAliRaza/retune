@@ -1,20 +1,26 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+// libmpv comes from Homebrew (`brew install mpv`), under whichever prefix this Mac uses.
+let homebrewPrefixes = ["/opt/homebrew", "/usr/local"].filter { FileManager.default.fileExists(atPath: "\($0)/include/mpv/client.h") }
 
 let package = Package(
     name: "Lumen",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "Lumen", targets: ["Lumen"])],
     targets: [
-        // libmpv from Homebrew (`brew install mpv`); headers are referenced by absolute path in the modulemap.
-        .systemLibrary(name: "CMPV", path: "Sources/CMPV"),
+        .systemLibrary(name: "CMPV", path: "Sources/CMPV", providers: [.brew(["mpv"])]),
         .target(name: "LumenCore"),
         .executableTarget(
             name: "Lumen",
             dependencies: ["LumenCore", "CMPV"],
-            swiftSettings: [.swiftLanguageMode(.v5)],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .unsafeFlags(homebrewPrefixes.flatMap { ["-Xcc", "-I\($0)/include"] }),
+            ],
             linkerSettings: [
-                .unsafeFlags(["-L/opt/homebrew/lib", "-Xlinker", "-rpath", "-Xlinker", "/opt/homebrew/lib"]),
+                .unsafeFlags(homebrewPrefixes.flatMap { ["-L\($0)/lib", "-Xlinker", "-rpath", "-Xlinker", "\($0)/lib"] }),
             ]
         ),
         .testTarget(name: "LumenCoreTests", dependencies: ["LumenCore"]),

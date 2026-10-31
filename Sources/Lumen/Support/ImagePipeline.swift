@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import LumenCore
 import SwiftUI
 
 /// Downloads, downsamples and caches artwork. Posters arrive as full-size TMDB images; decoding them
@@ -11,6 +12,8 @@ actor ImagePipeline {
     private var inFlight: [String: Task<NSImage?, Never>] = [:]
     private var failed: Set<URL> = []
     private let session: URLSession
+    /// Artwork URLs come from the playlist; an endless response must not exhaust memory while scrolling.
+    private static let maxArtworkBytes = 32 << 20
 
     init() {
         memory.countLimit = 600
@@ -22,6 +25,7 @@ actor ImagePipeline {
         configuration.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 1 << 30, directory: cacheDirectory)
         configuration.requestCachePolicy = .returnCacheDataElseLoad
         configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 60
         configuration.httpMaximumConnectionsPerHost = 8
         session = URLSession(configuration: configuration)
     }
@@ -34,7 +38,8 @@ actor ImagePipeline {
 
         let session = session
         let task = Task<NSImage?, Never>.detached(priority: .utility) {
-            guard let (data, response) = try? await session.data(from: url) else { return nil }
+            guard StreamURLPolicy.isHTTP(url),
+                  let (data, response) = try? await session.boundedData(from: url, limit: Self.maxArtworkBytes) else { return nil }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 200
             guard status == 200, let image = Self.downsample(data, maxPixelSize: maxPixelSize) else {
                 // Missing or undecodable artwork won't fix itself; timeouts and offline blips might.

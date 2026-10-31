@@ -81,6 +81,11 @@ struct PlaylistEditor: View {
                         .onChange(of: server) { autofillFromPastedLink() }
                     TextField("Username", text: $username)
                     SecureField("Password", text: $password, prompt: existing == nil ? nil : Text("Unchanged"))
+                    if usesPlainHTTP {
+                        Label("This server uses plain HTTP, so your login travels unencrypted. Use an https:// address if your provider offers one.",
+                              systemImage: "lock.open")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
                 case .m3uURL:
                     TextField("Playlist URL", text: $m3uURL, prompt: Text("http://…/get.php?username=…&type=m3u_plus"))
                     if XtreamCredentials.parse(fromPlaylistURL: m3uURL) != nil {
@@ -121,6 +126,10 @@ struct PlaylistEditor: View {
             if case .success(let url) = result { fileURL = url; if name.isEmpty { name = url.deletingPathExtension().lastPathComponent } }
         }
         .onAppear(perform: populate)
+    }
+
+    private var usesPlainHTTP: Bool {
+        XtreamCredentials.normalizeServer(server)?.scheme?.lowercased() == "http"
     }
 
     private var isValid: Bool {
@@ -172,12 +181,17 @@ struct PlaylistEditor: View {
             }
             let playlist = Playlist(id: id, name: displayName.isEmpty ? (serverURL.host() ?? "Xtream") : displayName,
                                     source: .xtream(server: serverURL, username: user), createdAt: existing?.createdAt ?? .now)
-            model.addPlaylist(playlist, password: secret)
+            do {
+                try model.addPlaylist(playlist, password: secret)
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
         case .m3uURL, .m3uFile:
             guard let url = kind == .m3uFile ? fileURL : URL(lenient: m3uURL) else { return }
             let fallbackName = kind == .m3uFile ? url.deletingPathExtension().lastPathComponent : (url.host() ?? "Playlist")
-            model.addPlaylist(Playlist(id: id, name: displayName.isEmpty ? fallbackName : displayName, source: .m3u(url),
-                                       createdAt: existing?.createdAt ?? .now), password: nil)
+            try? model.addPlaylist(Playlist(id: id, name: displayName.isEmpty ? fallbackName : displayName, source: .m3u(url),
+                                            createdAt: existing?.createdAt ?? .now), password: nil)
         }
         dismiss()
     }

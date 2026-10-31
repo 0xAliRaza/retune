@@ -74,7 +74,7 @@ public enum CatalogLoader {
         if url.isFileURL {
             data = try Data(contentsOf: url)
         } else {
-            let (body, response) = try await session.data(from: url)
+            let (body, response) = try await session.boundedData(from: url, limit: URLSession.apiResponseLimit)
             if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { throw LumenError.http(status) }
             data = body
         }
@@ -108,7 +108,8 @@ public struct JSONFileStore<Value: Codable>: Sendable {
     /// Writes atomically with owner-only permissions from the first byte (library and secrets hold private data).
     public func save(_ value: Value) throws {
         let fileManager = FileManager.default
-        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
         let data = try JSONEncoder().encode(value)
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         guard fileManager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
@@ -135,10 +136,35 @@ public enum AppPaths {
 
     public static var playlists: URL { support.appendingPathComponent("playlists.json") }
     public static var library: URL { support.appendingPathComponent("library.json") }
-    public static var secrets: URL { support.appendingPathComponent("secrets.json") }
+    /// Plain password file from early builds; `SecretStore.migrateLegacyFile` removes it.
+    public static var legacySecrets: URL { support.appendingPathComponent("secrets.json") }
 
     public static func catalog(for playlist: UUID) -> URL {
         support.appendingPathComponent("Catalogs", isDirectory: true)
             .appendingPathComponent("\(playlist.uuidString).json")
+    }
+
+    /// M3U links, catalogs and history can reveal account details, so everything under `root` is made
+    /// private to the user, including files written by builds that used looser permissions.
+    public static func restrictPermissions(root: URL = support) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: root.path) else { return }
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        guard let contents = fileManager.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+        for case let item as URL in contents {
+            let isDirectory = (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            try? fileManager.setAttributes([.posixPermissions: isDirectory ? 0o700 : 0o600], ofItemAtPath: item.path)
+        }
+    }
+
+    /// Earlier builds let URLSession's shared cache store API requests, whose URLs contain the password.
+    /// The folders are deleted rather than emptied, because deleted SQLite rows stay readable on disk.
+    public static func purgeNetworkCaches(bundleID: String?, library: URL? = nil) {
+        guard let bundleID, !bundleID.isEmpty else { return }
+        let fileManager = FileManager.default
+        guard let root = library ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        for folder in ["Caches", "HTTPStorages"] {
+            try? fileManager.removeItem(at: root.appendingPathComponent(folder).appendingPathComponent(bundleID))
+        }
     }
 }

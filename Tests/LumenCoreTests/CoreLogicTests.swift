@@ -183,17 +183,28 @@ struct LibraryStateTests {
 }
 
 struct SecretStoreTests {
-    @Test func storesSecretsInUserOnlyFile() throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-secrets-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let store = SecretStore(url: url)
-        store.set("pw1", for: "a")
-        store.set("pw2", for: "b")
+    private func store() -> SecretStore { SecretStore(service: "lumen.tests.\(UUID().uuidString)") }
+
+    @Test func storesUpdatesAndRemovesKeychainItems() throws {
+        let store = store()
+        defer { store.remove("a"); store.remove("b") }
+        try store.set("pw1", for: "a")
+        try store.set("pw1-changed", for: "a")
+        try store.set("pw2", for: "b")
+        #expect(store.get("a") == "pw1-changed")
         store.remove("a")
         #expect(store.get("a") == nil)
         #expect(store.get("b") == "pw2")
-        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
-        #expect(permissions == 0o600)
+    }
+
+    @Test func migratesLegacyFileThenDeletesIt() throws {
+        let store = store()
+        defer { store.remove("a") }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-legacy-\(UUID().uuidString).json")
+        try JSONFileStore<[String: String]>(url: file).save(["a": "old-password"])
+        store.migrateLegacyFile(at: file)
+        #expect(store.get("a") == "old-password")
+        #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 }
 
@@ -560,6 +571,12 @@ struct ReviewHardeningTests {
 
 /// Serves canned responses so XtreamClient's retry rules can be tested without a network.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
     nonisolated(unsafe) static var responses: [(Int, Data)] = []
     nonisolated(unsafe) static var requests = 0
 
@@ -581,10 +598,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 @Suite(.serialized)
 struct XtreamRetryTests {
     private func client() -> XtreamClient {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        return XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "p"),
-                            session: URLSession(configuration: configuration))
+        XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "p"),
+                     session: StubProtocol.session())
     }
 
     @Test func emptyBodyIsRetriedThenSucceeds() async throws {
@@ -598,6 +613,20 @@ struct XtreamRetryTests {
     @Test func persistentEmptyBodyIsAnErrorNotAnEmptySection() async {
         StubProtocol.responses = [(200, Data()), (200, Data()), (200, Data())]
         await #expect(throws: LumenError.emptyResponse) { try await client().movies() }
+    }
+
+    @Test func oversizedResponsesAreCutOff() async {
+        StubProtocol.responses = [(200, Data(repeating: 0, count: 2048))]
+        let session = StubProtocol.session()
+        await #expect(throws: LumenError.responseTooLarge) {
+            _ = try await session.boundedData(from: URL(string: "http://stub.example/big")!, limit: 1024)
+        }
+    }
+
+    @Test func boundedDataReturnsNormalBodies() async throws {
+        StubProtocol.responses = [(200, Data("hello".utf8))]
+        let (data, _) = try await StubProtocol.session().boundedData(from: URL(string: "http://stub.example/ok")!, limit: 1024)
+        #expect(data == Data("hello".utf8))
     }
 
     @Test func emptyArrayIsAGenuinelyEmptySection() async throws {
@@ -657,5 +686,153 @@ struct ReconnectPolicyTests {
         #expect(ReconnectPolicy.delay(afterFailedAttempts: ReconnectPolicy.maxAttempts) == nil)
         let total = ReconnectPolicy.delays.reduce(Duration.zero, +)
         #expect(total >= .seconds(10))
+    }
+}
+
+/// The replay bug: FFmpeg reconnecting inside a live stream spliced whatever the server sent next
+/// (often minutes old) into the running playback, and hid the failure from `PlaybackSession`.
+struct StreamProfileTests {
+    private func value(_ profile: StreamProfile, _ name: String) -> String? {
+        profile.mpvProperties.first { $0.name == name }?.value
+    }
+
+    @Test func liveNeverReconnectsInsideFFmpeg() {
+        #expect(value(.live, "stream-lavf-o") == "")
+        #expect(value(.live, "demuxer-max-back-bytes") == "0")
+        #expect(value(.live, "demuxer-seekable-cache") == "no")
+    }
+
+    @Test func onDemandNeverRestartsAnUnseekableFile() throws {
+        let options = try #require(value(.onDemand, "stream-lavf-o"))
+        #expect(options.contains("reconnect=1"))
+        #expect(!options.contains("reconnect_streamed"))
+    }
+
+    @Test func bothProfilesSetTheSameProperties() {
+        // mpv keeps properties across files, so anything set for one profile must be reset by the other.
+        #expect(StreamProfile.live.mpvProperties.map(\.name) == StreamProfile.onDemand.mpvProperties.map(\.name))
+    }
+}
+
+struct UntrustedInputTests {
+    @Test(arguments: [
+        "av://lavfi:testsrc,vmafmotion@h=/Users/x/.zshrc", "file:///etc/passwd", "edl://a.mkv", "memory://x",
+        "fd://3", "lavf://x", "javascript:alert(1)", "/etc/passwd", "httpx://host/a",
+    ])
+    func rejectsLocalAndSpecialProtocols(_ raw: String) throws {
+        let url = URL(string: raw)
+        #expect(url.map(StreamURLPolicy.isAllowed) != true)
+        #expect(M3UParser.parse("#EXTM3U\n#EXTINF:-1,Evil\n\(raw)\n").isEmpty)
+    }
+
+    @Test(arguments: ["http://h.example/a.ts", "HTTPS://h.example/a.m3u8", "rtmp://h.example/live", "rtsp://h.example/s", "udp://@239.0.0.1:1234"])
+    func acceptsNetworkStreams(_ raw: String) throws {
+        #expect(StreamURLPolicy.isAllowed(try #require(URL(string: raw))))
+    }
+
+    @Test func lenientURLRejectsHTTPLookalikes() {
+        #expect(URL(lenient: "httpx://host/a.png") == nil)
+        #expect(URL(lenient: "https://host/a.png") != nil)
+    }
+
+    @Test func absurdEPGTimestampsAreDiscarded() throws {
+        struct Holder: Decodable {
+            let date: Date?
+            enum CodingKeys: String, CodingKey { case stop }
+            init(from decoder: Decoder) throws { date = try decoder.container(keyedBy: CodingKeys.self).lenientDate(.stop) }
+        }
+        #expect(try JSONDecoder().decode(Holder.self, from: Data(#"{"stop":1e21}"#.utf8)).date == nil)
+        #expect(try JSONDecoder().decode(Holder.self, from: Data(#"{"stop":1700000000}"#.utf8)).date != nil)
+    }
+
+    @Test func implausibleDurationsAreNotSaved() {
+        var state = LibraryState()
+        let item = PlaybackItem(id: "x", kind: .movie, title: "x", url: URL(string: "http://h/x")!)
+        state.recordProgress(key: "k", item: item, position: 10, duration: 9e18)
+        #expect(state.progress["k"] == nil)
+    }
+}
+
+struct CredentialHygieneTests {
+    @Test func apiSessionNeverPersistsRequests() {
+        let configuration = URLSession.lumenAPI.configuration
+        #expect(configuration.urlCache == nil)
+        #expect(configuration.httpCookieStorage == nil)
+    }
+
+    @Test func plusInPasswordSurvivesPHPQueryParsing() throws {
+        let client = XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "ab+c&d=e"))
+        let query = try #require(client.apiURL(action: nil).query(percentEncoded: true))
+        #expect(query.contains("password=ab%2Bc%26d%3De"))
+    }
+
+    @Test func slashInPasswordStillProducesACredentialFreeLocator() throws {
+        let client = XtreamClient(credentials: XtreamCredentials(server: URL(string: "http://h.example")!, username: "u", password: "a/b"))
+        let movie = Movie(id: "9", name: "M", poster: nil, categoryID: nil, rating: nil, added: nil, containerExtension: "mkv", directURL: nil)
+        let locator = try #require(XtreamClient.locator(for: client.movieURL(movie)))
+        #expect(locator.absoluteString == "lumen://movie/9.mkv")
+    }
+
+    @Test func m3uIDsNeverContainTheStreamURL() {
+        let text = "#EXTM3U\n#EXTINF:-1,Channel\nhttp://h.example/live/user/secret/1.ts\n"
+        let channel = M3UParser.catalog(from: M3UParser.parse(text)).channels[0]
+        #expect(!channel.id.contains("secret"))
+        #expect(channel.directURL?.absoluteString.contains("secret") == true)
+        #expect(XtreamClient.opaqueLocator(id: channel.id)?.absoluteString.contains("secret") == false)
+    }
+
+    @Test func restrictPermissionsTightensExistingFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-perms-\(UUID().uuidString)")
+        let nested = root.appendingPathComponent("Catalogs")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let file = root.appendingPathComponent("playlists.json")
+        try Data("[]".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+
+        AppPaths.restrictPermissions(root: root)
+
+        func mode(_ url: URL) throws -> Int? { try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int }
+        #expect(try mode(root) == 0o700)
+        #expect(try mode(nested) == 0o700)
+        #expect(try mode(file) == 0o600)
+    }
+
+    @Test func purgeRemovesOnlyThisAppsNetworkCaches() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-lib-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        let ours = library.appendingPathComponent("Caches/app.test")
+        let other = library.appendingPathComponent("Caches/Lumen/Artwork")
+        try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+
+        AppPaths.purgeNetworkCaches(bundleID: nil, library: library)
+        #expect(FileManager.default.fileExists(atPath: ours.path))
+
+        AppPaths.purgeNetworkCaches(bundleID: "app.test", library: library)
+        #expect(!FileManager.default.fileExists(atPath: ours.path))
+        #expect(FileManager.default.fileExists(atPath: other.path))
+    }
+}
+
+struct PINHashTests {
+    @Test func saltsEveryHashAndRejectsWrongPINs() {
+        let first = PINHash.make("1234"), second = PINHash.make("1234")
+        #expect(first != second)
+        #expect(first.hasPrefix("pbkdf2-sha256$"))
+        #expect(PINHash.verify("1234", against: first))
+        #expect(!PINHash.verify("1235", against: first))
+    }
+
+    @Test func legacyHashesStillVerifyAndAreFlaggedForUpgrade() {
+        let legacy = PINHash.legacyHash("1234")
+        #expect(PINHash.isLegacy(legacy))
+        #expect(PINHash.verify("1234", against: legacy))
+        #expect(!PINHash.verify("0000", against: legacy))
+    }
+
+    @Test func malformedStoredValuesNeverVerify() {
+        #expect(!PINHash.verify("1234", against: "pbkdf2-sha256$0$00$00"))
+        #expect(!PINHash.verify("1234", against: "pbkdf2-sha256$x$y$z"))
     }
 }

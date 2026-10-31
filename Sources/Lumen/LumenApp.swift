@@ -13,7 +13,9 @@ struct LumenApp: App {
                 .frame(minWidth: 980, minHeight: 620)
                 .onAppear {
                     appDelegate.model = model
+                    #if DEBUG
                     DevPlayback.startIfRequested(model)
+                    #endif
                 }
         }
         .defaultSize(width: 1360, height: 860)

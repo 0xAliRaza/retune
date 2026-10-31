@@ -1,11 +1,12 @@
 import Foundation
+import LumenCore
 import SwiftUI
 
 enum Format {
     /// 1:02:03 or 4:05.
     static func clock(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded(.down))
+        let total = wholeSeconds(seconds)
         let hours = total / 3600, minutes = (total % 3600) / 60, secs = total % 60
         return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, secs) : String(format: "%d:%02d", minutes, secs)
     }
@@ -17,7 +18,13 @@ enum Format {
     }
 
     static func remaining(_ seconds: Double) -> String {
-        "\(runtime(Int(seconds))) left"
+        "\(runtime(wholeSeconds(seconds))) left"
+    }
+
+    /// `Int(Double)` traps past Int.max, and media files can report any duration they like.
+    private static func wholeSeconds(_ seconds: Double) -> Int {
+        guard seconds.isFinite else { return 0 }
+        return Int(min(max(seconds, 0), LibraryState.maxPlausibleDuration).rounded(.down))
     }
 
     static func rating(_ value: Double) -> String { String(format: "%.1f", value) }

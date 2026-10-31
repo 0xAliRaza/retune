@@ -63,12 +63,12 @@ struct PlaybackStats {
 @MainActor
 @Observable
 final class MPVPlayer {
-    private(set) var isPaused = false
+    private(set) var isPaused = false { didSet { updateDisplayActivity() } }
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
     private(set) var bufferedAhead: Double = 0
     private(set) var isBuffering = false
-    private(set) var isLoaded = false
+    private(set) var isLoaded = false { didSet { updateDisplayActivity() } }
     /// True once a frame of the current file is on screen (mpv's playback-restart); drives the tuning card.
     private(set) var hasVideoFrame = false
     private(set) var reachedEnd = false
@@ -82,6 +82,9 @@ final class MPVPlayer {
     /// Per-file subtitle timing offset in seconds; resets whenever a new file loads.
     private(set) var subtitleDelay: Double = 0
     @ObservationIgnored private var lastSubtitleTrackID: Int?
+    /// Held while video plays. mpv's own screensaver handling lives in its window code, which libmpv's
+    /// render API doesn't use, so without this the display sleeps in the middle of a film.
+    @ObservationIgnored private var displayActivity: NSObjectProtocol?
 
     var audioTracks: [MediaTrack] { tracks.filter { $0.kind == .audio } }
     var subtitleTracks: [MediaTrack] { tracks.filter { $0.kind == .sub } }
@@ -113,19 +116,21 @@ final class MPVPlayer {
             ("input-default-bindings", "no"),
             ("input-vo-keyboard", "no"),
             ("osd-level", "0"),
+            // Stream URLs are untrusted: no script runner, no yt-dlp lookups, no playlist escalation.
+            ("load-scripts", "no"),
+            ("ytdl", "no"),
+            ("load-unsafe-playlists", "no"),
             ("volume", String(storedVolume)),
             ("volume-max", "150"),
-            // Network resilience for IPTV: generous cache and transparent reconnects.
+            // Network resilience for IPTV: generous cache; `StreamProfile` adds the per-stream settings.
             // Read ahead aggressively so fast connections fill the buffer and slow patches don't stall.
             ("cache", "yes"),
             ("demuxer-max-bytes", "512MiB"),
-            ("demuxer-max-back-bytes", "128MiB"),
             ("demuxer-readahead-secs", "120"),
             ("network-timeout", "20"),
             // Start streams sooner: FFmpeg otherwise inspects up to ~5 s of a live stream before playing.
             // 2 s found the audio (AAC and E-AC-3) on every provider TS channel probed; 3 s leaves margin.
             ("demuxer-lavf-analyzeduration", "3"),
-            ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"),
             ("user-agent", "Lumen/1.0 (Macintosh; libmpv)"),
             // Subtitles and languages: follow the system language first.
             ("sub-auto", "fuzzy"),
@@ -146,7 +151,7 @@ final class MPVPlayer {
         observe("pause", MPV_FORMAT_FLAG)
         observe("time-pos", MPV_FORMAT_DOUBLE)
         observe("duration", MPV_FORMAT_DOUBLE)
-        observe("demuxer-cache-time", MPV_FORMAT_DOUBLE)
+        observe("demuxer-cache-duration", MPV_FORMAT_DOUBLE)
         observe("paused-for-cache", MPV_FORMAT_FLAG)
         observe("seeking", MPV_FORMAT_FLAG)
         observe("eof-reached", MPV_FORMAT_FLAG)
@@ -173,7 +178,13 @@ final class MPVPlayer {
 
     // MARK: Commands
 
-    func load(_ url: URL, startAt: Double? = nil) {
+    func load(_ url: URL, profile: StreamProfile, startAt: Double? = nil) {
+        // Catalogs cached by older builds skipped today's parser checks, so this is the real gate.
+        guard StreamURLPolicy.isAllowed(url) else {
+            stop()
+            showError("This stream uses an address type Lumen doesn't play.")
+            return
+        }
         hasVideoFrame = false
         errorMessage = nil
         reachedEnd = false
@@ -185,6 +196,7 @@ final class MPVPlayer {
         tracks = []
         videoSize = nil
         setSubtitleDelay(0)
+        for (name, value) in profile.mpvProperties { setProperty(name, value) }
         setProperty("start", startAt.map { String(format: "%.0f", $0) } ?? "none")
         command("loadfile", url.absoluteString, "replace")
         setProperty("pause", "no")
@@ -311,6 +323,17 @@ final class MPVPlayer {
         return stats
     }
 
+    private func updateDisplayActivity() {
+        let shouldHold = isLoaded && !isPaused
+        if shouldHold, displayActivity == nil {
+            displayActivity = ProcessInfo.processInfo.beginActivity(options: [.idleDisplaySleepDisabled, .userInitiated],
+                                                                    reason: "Playing video")
+        } else if !shouldHold, let activity = displayActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            displayActivity = nil
+        }
+    }
+
     // MARK: libmpv plumbing
 
     private func string(_ name: String) -> String? {
@@ -396,7 +419,7 @@ final class MPVPlayer {
         case "pause": isPaused = flag()
         case "time-pos": position = double()
         case "duration": duration = double()
-        case "demuxer-cache-time": bufferedAhead = double()
+        case "demuxer-cache-duration": bufferedAhead = double()
         case "paused-for-cache", "seeking": isBuffering = flag()
         case "volume": volume = double()
         case "mute": isMuted = flag()

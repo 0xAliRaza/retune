@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public struct WatchProgress: Codable, Hashable, Sendable {
@@ -37,11 +36,13 @@ public struct LibraryState: Codable, Sendable {
     public var hiddenCategories: Set<String> = []
     public var lockedCategories: Set<String> = []
     public var pinnedCategories: [String] = []
-    /// Salted SHA-256 of the parental PIN; nil when no PIN is set.
+    /// Derived hash of the parental PIN (see `PINHash`); nil when no PIN is set.
     public private(set) var pinHash: String?
 
     public static let recentChannelLimit = 30
     public static let progressLimit = 2000
+    /// A crafted file can claim any duration; saving one would poison Continue Watching.
+    public static let maxPlausibleDuration: Double = 7 * 24 * 60 * 60
 
     public init() {}
 
@@ -90,9 +91,12 @@ public struct LibraryState: Codable, Sendable {
 
     public var hasPIN: Bool { pinHash != nil }
 
-    public mutating func setPIN(_ pin: String) { pinHash = Self.hash(pin) }
+    public mutating func setPIN(_ pin: String) { pinHash = PINHash.make(pin) }
 
-    public func verifyPIN(_ pin: String) -> Bool { pinHash != nil && pinHash == Self.hash(pin) }
+    public func verifyPIN(_ pin: String) -> Bool { pinHash.map { PINHash.verify(pin, against: $0) } ?? false }
+
+    /// True when the stored hash predates the current format and should be replaced after a correct PIN.
+    public var pinNeedsUpgrade: Bool { pinHash.map(PINHash.isLegacy) ?? false }
 
     /// Removing the PIN also removes every lock, since nothing could unlock them anymore.
     public mutating func removePIN() {
@@ -101,10 +105,6 @@ public struct LibraryState: Codable, Sendable {
     }
 
     public static func isValidPIN(_ pin: String) -> Bool { pin.count >= 4 && pin.count <= 8 && pin.allSatisfy(\.isNumber) }
-
-    private static func hash(_ pin: String) -> String {
-        SHA256.hash(data: Data("lumen.parental.\(pin)".utf8)).map { String(format: "%02x", $0) }.joined()
-    }
 
     // MARK: History
 
@@ -146,7 +146,7 @@ public struct LibraryState: Codable, Sendable {
     }
 
     public mutating func recordProgress(key: String, item: PlaybackItem, position: Double, duration: Double, at date: Date = .now) {
-        guard duration > 0, position.isFinite, duration.isFinite else { return }
+        guard duration > 0, position.isFinite, duration.isFinite, duration < Self.maxPlausibleDuration else { return }
         progress[key] = WatchProgress(item: item, position: position, duration: duration, updatedAt: date)
         pruneProgress()
     }

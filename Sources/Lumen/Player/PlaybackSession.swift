@@ -32,6 +32,8 @@ final class PlaybackSession {
     @ObservationIgnored private var tuneTask: Task<Void, Never>?
     /// The channel watched before the current one, for ⌫ "last channel".
     @ObservationIgnored private var previousIndex: Int?
+    /// Where the current load was asked to start; the engine's position means nothing until a frame shows.
+    @ObservationIgnored private var requestedStart: Double?
 
     /// Rapid channel changes only connect once the user pauses, so zapping stays instant and
     /// single-connection accounts aren't hammered.
@@ -83,8 +85,19 @@ final class PlaybackSession {
     func retry() {
         guard let current else { return }
         reconnectAttempt = 0
-        // A live stream's position is a broadcast timestamp, not something to seek back to.
-        engine.load(current.url, startAt: !current.isLive && engine.position > 0 ? engine.position : nil)
+        load(current, startAt: resumePoint)
+    }
+
+    /// Where a reload of the current item should start. Live streams have none: their position is a
+    /// broadcast timestamp, not something to seek back to.
+    private var resumePoint: Double? {
+        guard current?.isLive == false else { return nil }
+        return engine.hasVideoFrame && engine.position > 0 ? engine.position : requestedStart
+    }
+
+    private func load(_ item: PlaybackItem, startAt: Double?) {
+        requestedStart = startAt
+        engine.load(item.url, profile: StreamProfile(isLive: item.isLive), startAt: startAt)
     }
 
     func stop() {
@@ -133,7 +146,7 @@ final class PlaybackSession {
     }
 
     private func begin(_ item: PlaybackItem, startAt: Double?) {
-        engine.load(item.url, startAt: startAt)
+        load(item, startAt: startAt)
         if item.isLive { onProgress?(item, 0, 0, true) }
         startProgressTimer()
         loadEPG(for: item)
@@ -147,13 +160,13 @@ final class PlaybackSession {
             return
         }
         reconnectAttempt += 1
-        let resumeAt = current.isLive || engine.position <= 0 ? nil : engine.position
+        let resumeAt = resumePoint
         engine.prepareForTuning()
         tuneTask?.cancel()
         tuneTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, self.current == current else { return }
-            self.engine.load(current.url, startAt: resumeAt)
+            self.load(current, startAt: resumeAt)
         }
     }
 
@@ -189,7 +202,8 @@ final class PlaybackSession {
     }
 
     private func saveProgress(isFinal: Bool = true) {
-        guard let current, !current.isLive, engine.duration > 0 else { return }
+        // Before the first frame the position is 0, which would overwrite the saved resume point.
+        guard let current, !current.isLive, engine.duration > 0, engine.hasVideoFrame else { return }
         onProgress?(current, engine.position, engine.duration, isFinal)
     }
 
@@ -205,7 +219,8 @@ final class PlaybackSession {
                 guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
                 self.epg = entries
                 guard let end = self.nowPlaying?.end ?? entries.first(where: { $0.start > .now })?.start else { return }
-                try? await Task.sleep(for: .seconds(max(end.timeIntervalSinceNow, 60)))
+                // Bounded both ways: EPG times come from the provider, and `Duration` traps on huge values.
+                try? await Task.sleep(for: .seconds(min(max(end.timeIntervalSinceNow, 60), 6 * 60 * 60)))
             }
         }
     }

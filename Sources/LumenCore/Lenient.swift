@@ -50,9 +50,10 @@ extension KeyedDecodingContainer {
         URL(lenient: lenientText(key))
     }
 
-    /// Unix timestamp encoded as number or string.
+    /// Unix timestamp encoded as number or string. Anything past the year 9999 is junk, and durations
+    /// computed from a value that large can trap further down.
     func lenientDate(_ key: Key) -> Date? {
-        guard let seconds = lenientDouble(key), seconds > 0 else { return nil }
+        guard let seconds = lenientDouble(key), seconds > 0, seconds < 253_402_300_800 else { return nil }
         return Date(timeIntervalSince1970: seconds)
     }
 
@@ -95,7 +96,8 @@ extension URL {
     public init?(lenient raw: String?) {
         guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         text = text.replacingOccurrences(of: "\\/", with: "/")
-        guard text.lowercased().hasPrefix("http") else { return nil }
+        let lowered = text.lowercased()
+        guard lowered.hasPrefix("http://") || lowered.hasPrefix("https://") else { return nil }
         if let url = URL(string: text) {
             self = url
         } else if let escaped = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),

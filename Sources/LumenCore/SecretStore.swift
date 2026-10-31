@@ -1,32 +1,54 @@
 import Foundation
+import Security
 
-/// Playlist passwords, kept in a user-only (0600) file in Application Support.
-/// Chosen over the Keychain because ad-hoc signed builds trigger a Keychain
-/// access prompt after every rebuild.
+/// Playlist passwords, kept in the user's login Keychain.
+///
+/// Builds that aren't signed with a stable identity get a one-time "allow access" prompt after each
+/// update, because the Keychain ties access to the app's code signature.
 public struct SecretStore: Sendable {
-    private let store: JSONFileStore<[String: String]>
+    private let service: String
 
-    public init(url: URL = AppPaths.secrets) {
-        store = JSONFileStore(url: url)
+    public init(service: String = "app.lumen.player.playlist") {
+        self.service = service
     }
 
     public func get(_ account: String) -> String? {
-        store.load()?[account]
+        var query = baseQuery(account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
-    public func set(_ secret: String, for account: String) {
-        var secrets = store.load() ?? [:]
-        secrets[account] = secret
-        write(secrets)
+    public func set(_ secret: String, for account: String) throws {
+        let data = Data(secret.utf8)
+        let update = SecItemUpdate(baseQuery(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if update == errSecSuccess { return }
+        guard update == errSecItemNotFound else { throw LumenError.keychain(update) }
+        var attributes = baseQuery(account)
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        let add = SecItemAdd(attributes as CFDictionary, nil)
+        guard add == errSecSuccess else { throw LumenError.keychain(add) }
     }
 
     public func remove(_ account: String) {
-        var secrets = store.load() ?? [:]
-        guard secrets.removeValue(forKey: account) != nil else { return }
-        write(secrets)
+        SecItemDelete(baseQuery(account) as CFDictionary)
     }
 
-    private func write(_ secrets: [String: String]) {
-        try? store.save(secrets)
+    /// Moves passwords out of the plain JSON file used by early builds. The file is only deleted once
+    /// every entry reads back from the Keychain, so a denied prompt loses nothing and retries next launch.
+    public func migrateLegacyFile(at url: URL = AppPaths.legacySecrets) {
+        guard let legacy = JSONFileStore<[String: String]>(url: url).load() else { return }
+        for (account, secret) in legacy { try? set(secret, for: account) }
+        guard legacy.allSatisfy({ get($0.key) == $0.value }) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func baseQuery(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
     }
 }

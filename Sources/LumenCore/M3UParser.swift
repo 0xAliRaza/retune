@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Parses extended M3U playlists (`#EXTM3U` / `#EXTINF` with tvg-* attributes).
@@ -25,7 +26,7 @@ public enum M3UParser {
                 pendingGroup = String(line.dropFirst("#EXTGRP:".count)).trimmingCharacters(in: .whitespaces)
             } else if line.hasPrefix("#") {
                 continue
-            } else if let url = URL(string: line), url.scheme != nil {
+            } else if let url = URL(string: line), StreamURLPolicy.isAllowed(url) {
                 var attributes = pendingInfo?.attributes ?? [:]
                 if attributes["group-title"] == nil, let pendingGroup { attributes["group-title"] = pendingGroup }
                 let title = pendingInfo?.title ?? attributes["tvg-name"] ?? url.lastPathComponent
@@ -70,10 +71,10 @@ public enum M3UParser {
         var movies: [Movie] = []
 
         var seenURLs: Set<URL> = []
-        // URLs double as ids, so a playlist listing the same stream twice would collide.
+        // Ids derive from the URL, so a playlist listing the same stream twice would collide.
         for entry in entries where seenURLs.insert(entry.url).inserted {
             let group = entry.group ?? "Uncategorized"
-            let id = entry.url.absoluteString
+            let id = stableID(for: entry.url)
             if isOnDemand(entry.url) {
                 movies.append(Movie(id: id, name: entry.title, poster: entry.logo,
                                     categoryID: movieGroups.id(for: group), rating: nil, added: nil,
@@ -86,6 +87,11 @@ public enum M3UParser {
         }
         return Catalog(liveCategories: liveGroups.categories, vodCategories: movieGroups.categories,
                        seriesCategories: [], channels: channels, movies: movies, series: [])
+    }
+
+    /// Ids end up in favorites and history keys, and M3U URLs often embed the account password.
+    static func stableID(for url: URL) -> String {
+        SHA256.hash(data: Data(url.absoluteString.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
     static func isOnDemand(_ url: URL) -> Bool {

@@ -251,6 +251,9 @@ final class AppModel {
     private let catalogMaxAge: TimeInterval = 12 * 60 * 60
 
     init() {
+        AppPaths.purgeNetworkCaches(bundleID: Bundle.main.bundleIdentifier)
+        AppPaths.restrictPermissions()
+        secrets.migrateLegacyFile()
         session = PlaybackSession()
         playlists = playlistStore.load() ?? []
         library = libraryStore.load() ?? LibraryState()
@@ -272,8 +275,8 @@ final class AppModel {
 
     // MARK: Playlists
 
-    func addPlaylist(_ playlist: Playlist, password: String?) {
-        if let password { secrets.set(password, for: playlist.id.uuidString) }
+    func addPlaylist(_ playlist: Playlist, password: String?) throws {
+        if let password { try secrets.set(password, for: playlist.id.uuidString) }
         if let index = playlists.firstIndex(where: { $0.id == playlist.id }) {
             playlists[index] = playlist
             savePlaylists()
@@ -286,6 +289,8 @@ final class AppModel {
     }
 
     func deletePlaylist(_ playlist: Playlist) {
+        // Invalidates any refresh in flight, which would otherwise re-save the deleted catalog.
+        loadGeneration += 1
         playlists.removeAll { $0.id == playlist.id }
         savePlaylists()
         secrets.remove(playlist.id.uuidString)
@@ -313,6 +318,8 @@ final class AppModel {
     private func loadActivePlaylist() async {
         loadGeneration += 1
         let generation = loadGeneration
+        // A refresh of the previous playlist no longer clears this itself once the generation moves on.
+        isRefreshing = false
         resetBrowsing()
         account = nil
         // Never show (or key favorites against) the previous playlist's catalog while this one loads.
@@ -380,6 +387,7 @@ final class AppModel {
                 client = nil
                 catalog = try await CatalogLoader.fetchM3U(url)
             }
+            guard generation == loadGeneration else { return }
             let cacheStore = JSONFileStore<Catalog>(url: AppPaths.catalog(for: playlist.id))
             Task.detached(priority: .utility) { try? cacheStore.save(catalog) }
             let built = await LoadedCatalog.build(playlist: playlist, catalog: catalog, client: client)
@@ -494,7 +502,7 @@ final class AppModel {
 
     @discardableResult
     func unlock(_ id: String, pin: String) -> Bool {
-        guard library.verifyPIN(pin) else { return false }
+        guard verifyPIN(pin) else { return false }
         unlockedCategories.insert(categoryKey(id))
         return true
     }
@@ -506,7 +514,17 @@ final class AppModel {
     var hasPIN: Bool { library.hasPIN }
     var pinRequest: PINRequest?
 
-    func verifyPIN(_ pin: String) -> Bool { library.verifyPIN(pin) }
+    func verifyPIN(_ pin: String) -> Bool {
+        guard library.verifyPIN(pin) else { return false }
+        upgradePINIfNeeded(pin)
+        return true
+    }
+
+    /// A correct PIN is the only moment a stored legacy hash can be replaced.
+    private func upgradePINIfNeeded(_ pin: String) {
+        guard library.pinNeedsUpgrade else { return }
+        setPIN(pin)
+    }
 
     func setPIN(_ pin: String) {
         library.setPIN(pin)
@@ -690,16 +708,18 @@ final class AppModel {
         scheduleLibrarySave()
     }
 
-    /// Strips credentials from Xtream stream URLs before they're persisted.
+    /// Strips credentials from stream URLs before they're persisted.
     private func storable(_ item: PlaybackItem) -> PlaybackItem {
-        XtreamClient.locator(for: item.url).map(item.with(url:)) ?? item
+        let locator = loaded?.client == nil ? XtreamClient.opaqueLocator(id: item.id) : XtreamClient.locator(for: item.url)
+        return locator.map(item.with(url:)) ?? item
     }
 
     /// Turns a stored (credential-free) item back into a playable one for the current account.
     private func playable(_ item: PlaybackItem) -> PlaybackItem? {
         guard item.url.scheme == XtreamClient.locatorScheme else { return item }
-        guard let client = loaded?.client else { return nil }
-        return item.with(url: client.resolve(item.url))
+        if let client = loaded?.client { return item.with(url: client.resolve(item.url)) }
+        // M3U playlists have no account to rebuild the URL from; the catalog entry holds it.
+        return loaded?.movies.item(id: item.id)?.directURL.map(item.with(url:))
     }
 
     private func scheduleLibrarySave() {
