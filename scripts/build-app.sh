@@ -12,6 +12,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Lumen"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 
 if [[ ! -f Resources/AppIcon.icns ]]; then
   ICONSET="$(mktemp -d)/AppIcon.iconset"
