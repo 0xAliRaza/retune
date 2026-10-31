@@ -240,8 +240,8 @@ struct PlayerScreen: View {
         case "[": if !isLive { changeSpeed(by: -1) }; return true
         case "]": if !isLive { changeSpeed(by: 1) }; return true
         case "\\": if !isLive { engine.setSpeed(1); showFlash("Speed 1×") }; return true
-        case "+", "=": changeVolume(5); return true
-        case "-": changeVolume(-5); return true
+        case "+", "=": changeVolume(up: true); return true
+        case "-": changeVolume(up: false); return true
         default: return false
         }
     }
@@ -255,9 +255,9 @@ struct PlayerScreen: View {
         showFlash("Speed \(next.formatted())×")
     }
 
-    private func changeVolume(_ delta: Double) {
-        engine.setVolume(engine.volume + delta)
-        showFlash("Volume \(Int(engine.volume))%")
+    private func changeVolume(up: Bool) {
+        engine.setVolume(VolumeLevel.stepped(engine.volume, up: up))
+        showFlash("Volume \(VolumeLevel.percent(engine.volume))")
     }
 }
 
@@ -438,16 +438,21 @@ private struct VolumeControl: View {
 
     var body: some View {
         let engine = model.session.engine
+        let level = engine.isMuted ? 0 : engine.volume
         HStack(spacing: 4) {
             Button { engine.setMuted(!engine.isMuted) } label: {
                 Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : engine.volume < 50 ? "speaker.wave.1.fill" : "speaker.wave.3.fill")
                     .frame(width: 22)
             }
             .help("Mute (M)")
-            Slider(value: Binding(get: { engine.isMuted ? 0 : engine.volume }, set: { engine.setVolume($0) }), in: 0...150)
+            Slider(value: Binding(get: { level }, set: { engine.setVolume($0) }), in: 0...VolumeLevel.maximum)
                 .frame(width: 100)
                 .controlSize(.small)
                 .tint(.white)
+            Text(VolumeLevel.percent(level))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: 34, alignment: .trailing)
         }
     }
 }

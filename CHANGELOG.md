@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Volume now stops at 100% instead of amplifying up to 150%, and the control shows its level as a number.
+- `-` and `=` move the volume in steps of 5, landing on 95 and 100 instead of 94 and 99.
+
 ### Fixed
 
 - Interlaced channels are now deinterlaced, which removes striped motion and plays them at their full field rate.

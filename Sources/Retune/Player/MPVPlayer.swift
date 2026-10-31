@@ -118,7 +118,7 @@ final class MPVPlayer {
         handle = mpv_create()
         guard let handle else { return }
 
-        let storedVolume = UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double ?? 100
+        let storedVolume = VolumeLevel.clamped(UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double ?? VolumeLevel.maximum)
         let options: [(String, String)] = [
             ("vo", "libmpv"),
             ("hwdec", "auto-safe"),
@@ -135,7 +135,7 @@ final class MPVPlayer {
             ("ytdl", "no"),
             ("load-unsafe-playlists", "no"),
             ("volume", String(storedVolume)),
-            ("volume-max", "150"),
+            ("volume-max", String(VolumeLevel.maximum)),
             // Network resilience for IPTV: generous cache; `StreamProfile` adds the per-stream settings.
             // Read ahead aggressively so fast connections fill the buffer and slow patches don't stall.
             ("cache", "yes"),
@@ -268,7 +268,7 @@ final class MPVPlayer {
     }
 
     func setVolume(_ value: Double) {
-        let clamped = min(max(value, 0), 150)
+        let clamped = VolumeLevel.clamped(value)
         volume = clamped
         setProperty("volume", String(clamped))
         if isMuted, clamped > 0 { setMuted(false) }

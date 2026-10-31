@@ -999,6 +999,37 @@ struct PINHashTests {
     }
 }
 
+@Suite struct VolumeLevelTests {
+    @Test func percentRoundsToTheNearestWholeNumber() {
+        #expect(VolumeLevel.percent(99.39) == "99%")
+        #expect(VolumeLevel.percent(99.6) == "100%")
+        #expect(VolumeLevel.percent(0) == "0%")
+    }
+
+    @Test func levelsAreWholeAndNeverAmplified() {
+        #expect(VolumeLevel.clamped(99.39) == 99)
+        #expect(VolumeLevel.clamped(150) == 100)
+        #expect(VolumeLevel.clamped(-5) == 0)
+    }
+
+    @Test func stepsLandOnMultiplesOfFive() {
+        #expect(VolumeLevel.stepped(95, up: true) == 100)
+        #expect(VolumeLevel.stepped(95, up: false) == 90)
+    }
+
+    @Test func aLevelBetweenStepsLinesUpWithTheNextOne() {
+        #expect(VolumeLevel.stepped(99.39, up: true) == 100)
+        #expect(VolumeLevel.stepped(99.39, up: false) == 95)
+        #expect(VolumeLevel.stepped(97, up: true) == 100)
+        #expect(VolumeLevel.stepped(97, up: false) == 95)
+    }
+
+    @Test func stepsStopAtBothEnds() {
+        #expect(VolumeLevel.stepped(100, up: true) == 100)
+        #expect(VolumeLevel.stepped(0, up: false) == 0)
+    }
+}
+
 @Suite struct PendingUntilReadyTests {
     @Test func runsAtOnceWhenReady() {
         var gate = PendingUntilReady<Int>()
