@@ -178,7 +178,7 @@ This produces a self-contained app and DMG in `build/`.
 3. Wait for the first catalog download. After that, Retune opens instantly and refreshes in the background.
 
 > [!NOTE]
-> **Don't be alarmed by a password popup.** You won't see one on a fresh install, but after an update macOS may say Retune wants to use confidential information in your Keychain, and ask for your login keychain password. A second popup may follow straight away, this time about access to a key. That's your normal Mac password both times. Type it and click **Always Allow** each time. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
+> **Don't be alarmed by a password popup.** You won't see one on a fresh install, but after an update macOS may say *Retune wants to use your confidential information stored in "io.github.0xaliraza.retune.playlist" in your keychain*, and ask for your login keychain password. A second popup may follow straight away, saying *Retune wants to access key "io.github.0xaliraza.retune.playlist" in your keychain*. That's your normal Mac password both times. Type it and click **Always Allow** each time with the mouse, because pressing Return picks **Allow**, which only lasts for that launch. It goes to macOS, not to Retune. [Here's why it happens](#why-does-macos-ask-for-my-mac-password).
 
 ## Your questions about security and privacy
 
