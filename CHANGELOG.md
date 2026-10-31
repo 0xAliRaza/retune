@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Interlaced channels are now deinterlaced, which removes striped motion and plays them at their full field rate.
+- The first stream after launch could play sound over a black picture if it opened before the video layer was ready.
+
 ## 1.0.1 - 2026-10-31
 
 ### Fixed

@@ -998,3 +998,46 @@ struct PINHashTests {
         await SerialWork().finished()
     }
 }
+
+@Suite struct PendingUntilReadyTests {
+    @Test func runsAtOnceWhenReady() {
+        var gate = PendingUntilReady<Int>()
+        _ = gate.setReady(true)
+        #expect(gate.submit(1) == 1)
+    }
+
+    @Test func waitsUntilReady() {
+        var gate = PendingUntilReady<Int>()
+        #expect(gate.submit(1) == nil)
+        #expect(gate.setReady(true) == 1)
+    }
+
+    @Test func onlyTheLatestRequestRuns() {
+        var gate = PendingUntilReady<Int>()
+        _ = gate.submit(1)
+        _ = gate.submit(2)
+        #expect(gate.setReady(true) == 2)
+    }
+
+    @Test func aRequestRunsOnlyOnce() {
+        var gate = PendingUntilReady<Int>()
+        _ = gate.submit(1)
+        _ = gate.setReady(true)
+        #expect(gate.setReady(true) == nil)
+    }
+
+    @Test func aCancelledRequestNeverRuns() {
+        var gate = PendingUntilReady<Int>()
+        _ = gate.submit(1)
+        gate.cancel()
+        #expect(gate.setReady(true) == nil)
+    }
+
+    @Test func requestsWaitAgainAfterReadinessIsLost() {
+        var gate = PendingUntilReady<Int>()
+        _ = gate.setReady(true)
+        _ = gate.setReady(false)
+        #expect(gate.submit(1) == nil)
+        #expect(gate.setReady(true) == 1)
+    }
+}

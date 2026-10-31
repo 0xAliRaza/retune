@@ -103,6 +103,17 @@ final class MPVPlayer {
 
     private static let volumeDefaultsKey = "player.volume"
 
+    private struct LoadRequest {
+        let url: URL
+        let profile: StreamProfile
+        let startAt: Double?
+    }
+
+    /// mpv gives up on video for the whole file if it opens before the render context exists, leaving
+    /// sound over a black picture. The context only appears once the layer is on screen, which a fast
+    /// stream can beat, so a load waits here for it.
+    @ObservationIgnored private var loadGate = PendingUntilReady<LoadRequest>()
+
     init() {
         handle = mpv_create()
         guard let handle else { return }
@@ -111,6 +122,9 @@ final class MPVPlayer {
         let options: [(String, String)] = [
             ("vo", "libmpv"),
             ("hwdec", "auto-safe"),
+            // Live TV is often interlaced, and showing that as-is looks soft with striped motion.
+            // `auto` only acts on frames flagged as interlaced, so everything else is left alone.
+            ("deinterlace", "auto"),
             ("keep-open", "yes"),
             ("idle", "yes"),
             ("input-default-bindings", "no"),
@@ -199,14 +213,24 @@ final class MPVPlayer {
         tracks = []
         videoSize = nil
         setSubtitleDelay(0)
-        for (name, value) in profile.mpvProperties { setProperty(name, value) }
-        if let speed = profile.forcedSpeed { setSpeed(speed) }
-        setProperty("start", startAt.map { String(format: "%.0f", $0) } ?? "none")
-        command("loadfile", url.absoluteString, "replace")
+        if let request = loadGate.submit(LoadRequest(url: url, profile: profile, startAt: startAt)) { start(request) }
+    }
+
+    private func start(_ request: LoadRequest) {
+        for (name, value) in request.profile.mpvProperties { setProperty(name, value) }
+        if let speed = request.profile.forcedSpeed { setSpeed(speed) }
+        setProperty("start", request.startAt.map { String(format: "%.0f", $0) } ?? "none")
+        command("loadfile", request.url.absoluteString, "replace")
         setProperty("pause", "no")
     }
 
+    /// Called by the video layer as its render context comes and goes.
+    func renderContextChanged(isReady: Bool) {
+        if let request = loadGate.setReady(isReady) { start(request) }
+    }
+
     func stop() {
+        loadGate.cancel()
         command("stop")
         hasVideoFrame = false
         isLoaded = false

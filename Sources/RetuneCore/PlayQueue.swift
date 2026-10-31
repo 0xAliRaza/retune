@@ -70,6 +70,33 @@ public enum EpisodePicker {
     }
 }
 
+/// Holds the latest request until what it depends on is ready. A newer request replaces a waiting one.
+public struct PendingUntilReady<Request> {
+    public private(set) var isReady = false
+    private var pending: Request?
+
+    public init() {}
+
+    /// Returns the request if it can run now, or nil if it was kept for later.
+    public mutating func submit(_ request: Request) -> Request? {
+        guard !isReady else { return request }
+        pending = request
+        return nil
+    }
+
+    /// Returns a waiting request that can now run.
+    public mutating func setReady(_ ready: Bool) -> Request? {
+        isReady = ready
+        guard ready else { return nil }
+        defer { pending = nil }
+        return pending
+    }
+
+    public mutating func cancel() {
+        pending = nil
+    }
+}
+
 /// How long to wait before each automatic reconnect. Single-connection IPTV accounts often refuse a new
 /// stream until the provider notices the previous one closed, so the first attempts fail spuriously.
 public enum ReconnectPolicy {

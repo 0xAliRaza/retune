@@ -27,6 +27,8 @@ final class MPVVideoLayer: CAOpenGLLayer {
     private var glContext: CGLContextObj?
     /// Separate from `lock` so a main-thread resize never waits behind a render blocked on frame timing.
     private let needsRedraw = OSAllocatedUnfairLock(initialState: true)
+    /// Told whether the render context exists. Runs on the render thread with `lock` held, so it must not block.
+    var onRenderContextChange: ((Bool) -> Void)?
     /// Also separate from `lock`, so asking for a screenshot never blocks the main thread on frame timing.
     private let pendingCapture = OSAllocatedUnfairLock<((CGImage?) -> Void)?>(uncheckedState: nil)
 
@@ -202,6 +204,7 @@ final class MPVVideoLayer: CAOpenGLLayer {
         }
         // No update callback: the asynchronous layer polls `mpv_render_context_update` each refresh.
         renderContext = context
+        onRenderContextChange?(context != nil)
     }
 
     /// libmpv requires the owning GL context to be current while freeing.
@@ -210,6 +213,7 @@ final class MPVVideoLayer: CAOpenGLLayer {
         if let glContext { CGLSetCurrentContext(glContext) }
         mpv_render_context_free(renderContext)
         self.renderContext = nil
+        onRenderContextChange?(false)
     }
 }
 
@@ -221,6 +225,9 @@ final class MPVVideoView: NSView {
     @MainActor
     init(player: MPVPlayer) {
         videoLayer = MPVVideoLayer(handle: player.handle)
+        videoLayer.onRenderContextChange = { [weak player] isReady in
+            DispatchQueue.main.async { player?.renderContextChanged(isReady: isReady) }
+        }
         super.init(frame: .zero)
         layer = videoLayer
         wantsLayer = true
